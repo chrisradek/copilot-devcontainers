@@ -4,6 +4,7 @@ A standalone CLI tool for running coding agents inside isolated dev containers o
 
 ## Prerequisites
 
+- **Git** 2.45.0+ (required for `--relative-paths` worktree support)
 - **Node.js** 18+
 - **Docker** installed and running
 - **GitHub CLI** (`gh`) installed and authenticated (for automatic token forwarding)
