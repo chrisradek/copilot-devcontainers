@@ -1,0 +1,269 @@
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+export interface ContainerUpResult {
+  outcome: "success" | "error";
+  containerId?: string;
+  remoteUser?: string;
+  remoteWorkspaceFolder?: string;
+  message?: string;
+}
+
+/**
+ * Resolve the path to the devcontainer CLI binary.
+ * Prefers a locally installed version, falls back to global.
+ */
+function getDevcontainerBin(): string {
+  // Check for locally installed binary in this package's node_modules
+  const localBin = path.resolve(
+    import.meta.dirname,
+    "../node_modules/.bin/devcontainer",
+  );
+  if (fs.existsSync(localBin)) {
+    return localBin;
+  }
+  // Fall back to global
+  return "devcontainer";
+}
+
+/**
+ * Get a GitHub token from the host's gh CLI to forward into the container.
+ * Returns undefined if gh is not installed or not authenticated.
+ */
+export function getHostGitHubToken(): string | undefined {
+  try {
+    return execFileSync("gh", ["auth", "token"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Verify that the workspace has a devcontainer configuration.
+ */
+export function hasDevcontainerConfig(workspaceFolder: string): boolean {
+  const locations = [
+    path.join(workspaceFolder, ".devcontainer", "devcontainer.json"),
+    path.join(workspaceFolder, ".devcontainer.json"),
+  ];
+  return locations.some((loc) => fs.existsSync(loc));
+}
+
+/**
+ * Resolve the main .git directory for a worktree.
+ * Returns undefined if not a worktree (i.e. regular repo with .git directory).
+ */
+export function resolveWorktreeMainGitDir(workspaceFolder: string): string | undefined {
+  const dotGitPath = path.join(workspaceFolder, ".git");
+  try {
+    const stat = fs.statSync(dotGitPath);
+    if (stat.isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  const content = fs.readFileSync(dotGitPath, "utf-8").trim();
+  const match = content.match(/^gitdir:\s*(.+)$/);
+  if (!match) return undefined;
+
+  const worktreeGitDir = path.resolve(workspaceFolder, match[1]);
+
+  const commondirPath = path.join(worktreeGitDir, "commondir");
+  try {
+    const commondir = fs.readFileSync(commondirPath, "utf-8").trim();
+    return path.resolve(worktreeGitDir, commondir);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Start a dev container for the given workspace folder.
+ */
+export async function containerUp(
+  workspaceFolder: string,
+  remoteEnvs?: Record<string, string>,
+): Promise<ContainerUpResult> {
+  const bin = getDevcontainerBin();
+  const args = [
+    "up",
+    "--workspace-folder",
+    workspaceFolder,
+    "--log-format",
+    "json",
+    // Don't mount the git root as workspace — keep the worktree as the workspace
+    // so that exec resolves the correct working directory.
+    "--mount-workspace-git-root",
+    "false",
+  ];
+
+  // Mount the main .git directory so git operations work inside the container.
+  // The worktree's .git file uses relative paths that resolve correctly when
+  // the main .git dir is mounted at the matching container path.
+  const mainGitDir = resolveWorktreeMainGitDir(workspaceFolder);
+  if (mainGitDir) {
+    const containerGitDir = path.posix.join(
+      "/workspaces",
+      path.relative(path.resolve(workspaceFolder, ".."), mainGitDir),
+    );
+    args.push(
+      "--mount",
+      `type=bind,source=${mainGitDir},target=${containerGitDir}`,
+    );
+  }
+
+  if (remoteEnvs) {
+    for (const [key, value] of Object.entries(remoteEnvs)) {
+      args.push("--remote-env", `${key}=${value}`);
+    }
+  }
+
+  const output = await execDevcontainer(bin, args);
+
+  // The last JSON line with "outcome" is the result
+  const lines = output.trim().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(lines[i]);
+      if (parsed.outcome) {
+        return parsed as ContainerUpResult;
+      }
+    } catch {
+      // Not JSON, skip
+    }
+  }
+
+  throw new Error(`Failed to parse devcontainer up output:\n${output}`);
+}
+
+/**
+ * Execute a command inside a running dev container (non-interactive).
+ * Returns the exit code.
+ */
+export async function containerExec(
+  workspaceFolder: string,
+  cmd: string[],
+  remoteEnvs?: Record<string, string>,
+): Promise<number> {
+  const bin = getDevcontainerBin();
+  const args = [
+    "exec",
+    "--workspace-folder",
+    workspaceFolder,
+  ];
+
+  if (remoteEnvs) {
+    for (const [key, value] of Object.entries(remoteEnvs)) {
+      args.push("--remote-env", `${key}=${value}`);
+    }
+  }
+
+  args.push(...cmd);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, {
+      stdio: "inherit",
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`Failed to exec in container: ${err.message}`));
+    });
+
+    child.on("close", (code) => {
+      resolve(code ?? 1);
+    });
+  });
+}
+
+/**
+ * Execute a command inside a running dev container (interactive, with TTY).
+ * Returns the child process so the caller can manage it.
+ */
+export function containerExecInteractive(
+  workspaceFolder: string,
+  cmd: string[],
+  remoteEnvs?: Record<string, string>,
+): ChildProcess {
+  const bin = getDevcontainerBin();
+  const args = [
+    "exec",
+    "--workspace-folder",
+    workspaceFolder,
+  ];
+
+  if (remoteEnvs) {
+    for (const [key, value] of Object.entries(remoteEnvs)) {
+      args.push("--remote-env", `${key}=${value}`);
+    }
+  }
+
+  args.push(...cmd);
+
+  return spawn(bin, args, {
+    stdio: "inherit",
+  });
+}
+
+/**
+ * Stop and remove a dev container for the given workspace folder.
+ */
+export async function containerDown(
+  workspaceFolder: string,
+): Promise<void> {
+  const containerId = await findContainerForWorkspace(workspaceFolder);
+  if (containerId) {
+    await execCommand("docker", ["rm", "-f", containerId]);
+  }
+}
+
+/**
+ * Find a running container associated with a workspace folder.
+ */
+async function findContainerForWorkspace(
+  workspaceFolder: string,
+): Promise<string | undefined> {
+  try {
+    const absPath = path.resolve(workspaceFolder);
+    // Devcontainers label containers with the workspace folder
+    const output = await execCommand("docker", [
+      "ps",
+      "-a",
+      "--filter",
+      `label=devcontainer.local_folder=${absPath}`,
+      "--format",
+      "{{.ID}}",
+    ]);
+    const id = output.trim().split("\n")[0];
+    return id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function execDevcontainer(bin: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`devcontainer ${args[0]} failed: ${stderr || err.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}
+
+function execCommand(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: "utf-8" }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`${cmd} ${args.join(" ")} failed: ${stderr || err.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}

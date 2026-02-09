@@ -1,0 +1,137 @@
+import { execFile, execFileSync, type ExecFileOptions } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  head: string;
+  isBare: boolean;
+}
+
+/**
+ * Find the git root directory for a given path.
+ */
+export function getGitRoot(dir: string): string {
+  return execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+    encoding: "utf-8",
+  }).trim();
+}
+
+/**
+ * Get the repository name from the git root.
+ */
+export function getRepoName(dir: string): string {
+  const root = getGitRoot(dir);
+  return path.basename(root);
+}
+
+/**
+ * Create a git worktree with a new branch.
+ */
+export async function createWorktree(
+  repoDir: string,
+  worktreePath: string,
+  branchName: string,
+  baseRef: string,
+): Promise<void> {
+  await execGit(repoDir, [
+    "worktree",
+    "add",
+    "--relative-paths",
+    "-b",
+    branchName,
+    worktreePath,
+    baseRef,
+  ]);
+
+  // Fix the gitdir file in .git/worktrees/<name>/ to use an absolute path.
+  // --relative-paths makes it relative, which breaks VS Code's worktree detection.
+  const absWorktreePath = path.resolve(worktreePath);
+  const worktreeName = path.basename(absWorktreePath);
+  const gitdirFile = path.join(repoDir, ".git", "worktrees", worktreeName, "gitdir");
+  if (fs.existsSync(gitdirFile)) {
+    fs.writeFileSync(gitdirFile, absWorktreePath + "/.git\n", "utf-8");
+  }
+}
+
+/**
+ * Remove a git worktree.
+ */
+export async function removeWorktree(
+  repoDir: string,
+  worktreePath: string,
+): Promise<void> {
+  await execGit(repoDir, ["worktree", "remove", "--force", worktreePath]);
+}
+
+/**
+ * List all git worktrees for a repository.
+ */
+export async function listWorktrees(repoDir: string): Promise<WorktreeInfo[]> {
+  const output = await execGit(repoDir, [
+    "worktree",
+    "list",
+    "--porcelain",
+  ]);
+
+  const worktrees: WorktreeInfo[] = [];
+  let current: Partial<WorktreeInfo> = {};
+
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current.path) {
+        worktrees.push(current as WorktreeInfo);
+      }
+      current = { path: line.slice("worktree ".length), isBare: false };
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length);
+    } else if (line.startsWith("branch ")) {
+      // e.g. "branch refs/heads/my-branch"
+      current.branch = line.slice("branch ".length).replace("refs/heads/", "");
+    } else if (line === "bare") {
+      current.isBare = true;
+    } else if (line === "detached") {
+      current.branch = "(detached)";
+    }
+  }
+
+  if (current.path) {
+    worktrees.push(current as WorktreeInfo);
+  }
+
+  return worktrees;
+}
+
+/**
+ * Delete a local branch.
+ */
+export async function deleteBranch(
+  repoDir: string,
+  branchName: string,
+): Promise<void> {
+  await execGit(repoDir, ["branch", "-D", branchName]);
+}
+
+/**
+ * Generate a sandbox branch name.
+ */
+export function generateBranchName(): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .slice(0, 19);
+  return `sandbox/${timestamp}`;
+}
+
+function execGit(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("git", ["-C", cwd, ...args], { encoding: "utf-8" }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`git ${args.join(" ")} failed: ${stderr || err.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}
