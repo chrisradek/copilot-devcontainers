@@ -53,6 +53,108 @@ export function hasDevcontainerConfig(workspaceFolder: string): boolean {
   return locations.some((loc) => fs.existsSync(loc));
 }
 
+const COPILOT_CLI_FEATURE = "ghcr.io/devcontainers/features/copilot-cli:1";
+const SAFE_DIRECTORY_CMD = "git config --global --add safe.directory '*'";
+
+/**
+ * Strip single-line (//) and multi-line comments from JSONC content,
+ * plus trailing commas before } or ], so it can be parsed by JSON.parse().
+ */
+function stripJsonComments(text: string): string {
+  let result = "";
+  let i = 0;
+  let inString = false;
+
+  while (i < text.length) {
+    if (inString) {
+      if (text[i] === "\\" && i + 1 < text.length) {
+        result += text[i] + text[i + 1];
+        i += 2;
+      } else {
+        if (text[i] === '"') inString = false;
+        result += text[i++];
+      }
+    } else if (text[i] === '"') {
+      inString = true;
+      result += text[i++];
+    } else if (text[i] === "/" && text[i + 1] === "/") {
+      // Skip to end of line
+      while (i < text.length && text[i] !== "\n") i++;
+    } else if (text[i] === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i += 2;
+    } else {
+      result += text[i++];
+    }
+  }
+
+  // Remove trailing commas before } or ]
+  return result.replace(/,\s*([}\]])/g, "$1");
+}
+
+/**
+ * Ensure the devcontainer config includes the copilot CLI feature and
+ * marks all directories as safe for git. Modifies the config in-place
+ * (the worktree is a disposable branch, so this won't affect the main repo).
+ */
+export function ensureCopilotFeature(workspaceFolder: string): void {
+  const locations = [
+    path.join(workspaceFolder, ".devcontainer", "devcontainer.json"),
+    path.join(workspaceFolder, ".devcontainer.json"),
+  ];
+
+  const configPath = locations.find((loc) => fs.existsSync(loc));
+  if (!configPath) return;
+
+  const raw = fs.readFileSync(configPath, "utf-8");
+  const config = JSON.parse(stripJsonComments(raw));
+
+  let modified = false;
+
+  // Add copilot-cli feature if not present
+  if (!config.features) {
+    config.features = {};
+  }
+  if (!config.features[COPILOT_CLI_FEATURE]) {
+    config.features[COPILOT_CLI_FEATURE] = {};
+    modified = true;
+  }
+
+  // Ensure git safe.directory is configured via postCreateCommand
+  const existing = config.postCreateCommand;
+  if (!existing) {
+    config.postCreateCommand = SAFE_DIRECTORY_CMD;
+    modified = true;
+  } else if (typeof existing === "string") {
+    if (!existing.includes("safe.directory")) {
+      config.postCreateCommand = `${existing} && ${SAFE_DIRECTORY_CMD}`;
+      modified = true;
+    }
+  } else if (Array.isArray(existing)) {
+    if (!existing.some((c: string) => c.includes("safe.directory"))) {
+      config.postCreateCommand = {
+        "original": existing,
+        "_copilot_safe_dir": SAFE_DIRECTORY_CMD,
+      };
+      modified = true;
+    }
+  } else if (typeof existing === "object") {
+    const values = Object.values(existing as Record<string, unknown>);
+    const hasSafeDir = values.some((v) =>
+      typeof v === "string" ? v.includes("safe.directory") : false,
+    );
+    if (!hasSafeDir) {
+      (existing as Record<string, string>)["_copilot_safe_dir"] = SAFE_DIRECTORY_CMD;
+      modified = true;
+    }
+  }
+
+  if (modified) {
+    fs.writeFileSync(configPath, JSON.stringify(config, null, "\t") + "\n", "utf-8");
+  }
+}
+
 /**
  * Resolve the main .git directory for a worktree.
  * Returns undefined if not a worktree (i.e. regular repo with .git directory).

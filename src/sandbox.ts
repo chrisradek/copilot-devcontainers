@@ -12,6 +12,7 @@ import {
 } from "./worktree.js";
 import {
   hasDevcontainerConfig,
+  ensureCopilotFeature,
   containerUp,
   containerExec,
   containerExecInteractive,
@@ -77,6 +78,9 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
     await deleteBranch(gitRoot, branchName);
     process.exit(1);
   }
+
+  // Inject copilot CLI feature and git safe.directory config
+  ensureCopilotFeature(worktreePath);
 
   log(`Starting dev container...`);
 

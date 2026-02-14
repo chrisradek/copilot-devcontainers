@@ -38,20 +38,28 @@ export async function createWorktree(
   await execGit(repoDir, [
     "worktree",
     "add",
-    "--relative-paths",
     "-b",
     branchName,
     worktreePath,
     baseRef,
   ]);
 
-  // Fix the gitdir file in .git/worktrees/<name>/ to use an absolute path.
-  // --relative-paths makes it relative, which breaks VS Code's worktree detection.
+  // Rewrite the worktree's .git file to use a relative gitdir path.
+  // Git creates it with an absolute path by default, but inside a dev container
+  // the absolute host path won't resolve. A relative path works in both contexts
+  // as long as the main .git dir is mounted at the matching relative position.
+  // We avoid --relative-paths because it sets the `extensions.relativeWorktrees`
+  // git config, which is unsupported by Microsoft.Build.Tasks.Git (Source Link)
+  // and breaks `dotnet build`.
   const absWorktreePath = path.resolve(worktreePath);
-  const worktreeName = path.basename(absWorktreePath);
-  const gitdirFile = path.join(repoDir, ".git", "worktrees", worktreeName, "gitdir");
-  if (fs.existsSync(gitdirFile)) {
-    fs.writeFileSync(gitdirFile, absWorktreePath + "/.git\n", "utf-8");
+  const dotGitFile = path.join(absWorktreePath, ".git");
+  // Read the gitdir path that git wrote (handles name collisions from duplicate basenames)
+  const gitdirContent = fs.readFileSync(dotGitFile, "utf-8").trim();
+  const gitdirMatch = gitdirContent.match(/^gitdir:\s*(.+)$/);
+  if (gitdirMatch) {
+    const absWorktreeGitDir = path.resolve(absWorktreePath, gitdirMatch[1]);
+    const relGitDir = path.relative(absWorktreePath, absWorktreeGitDir);
+    fs.writeFileSync(dotGitFile, `gitdir: ${relGitDir}\n`, "utf-8");
   }
 }
 
