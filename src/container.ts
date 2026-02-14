@@ -1,6 +1,7 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as readline from "node:readline";
 
 export interface ContainerUpResult {
   outcome: "success" | "error";
@@ -150,6 +151,19 @@ export function ensureCopilotFeature(workspaceFolder: string): void {
     }
   }
 
+  // Remove docker.sock bind mounts — the host socket may not be accessible
+  // (e.g. rootful podman) and docker-in-docker provides its own daemon.
+  if (Array.isArray(config.mounts)) {
+    const filtered = config.mounts.filter((m: unknown) => {
+      const str = typeof m === "string" ? m : typeof m === "object" && m !== null ? (m as Record<string, string>).source ?? "" : "";
+      return !str.includes("docker.sock");
+    });
+    if (filtered.length !== config.mounts.length) {
+      config.mounts = filtered;
+      modified = true;
+    }
+  }
+
   if (modified) {
     fs.writeFileSync(configPath, JSON.stringify(config, null, "\t") + "\n", "utf-8");
   }
@@ -183,12 +197,17 @@ export function resolveWorktreeMainGitDir(workspaceFolder: string): string | und
   }
 }
 
+export interface ContainerUpOptions {
+  verbose?: boolean;
+}
+
 /**
  * Start a dev container for the given workspace folder.
  */
 export async function containerUp(
   workspaceFolder: string,
   remoteEnvs?: Record<string, string>,
+  options?: ContainerUpOptions,
 ): Promise<ContainerUpResult> {
   const bin = getDevcontainerBin();
   const args = [
@@ -224,7 +243,7 @@ export async function containerUp(
     }
   }
 
-  const output = await execDevcontainer(bin, args);
+  const output = await execDevcontainer(bin, args, options?.verbose);
 
   // The last JSON line with "outcome" is the result
   const lines = output.trim().split("\n");
@@ -346,13 +365,46 @@ async function findContainerForWorkspace(
   }
 }
 
-function execDevcontainer(bin: string, args: string[]): Promise<string> {
+function execDevcontainer(bin: string, args: string[], verbose?: boolean): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(`devcontainer ${args[0]} failed: ${stderr || err.message}`));
+    const child = spawn(bin, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const chunks: string[] = [];
+
+    const rl = readline.createInterface({ input: child.stdout });
+    rl.on("line", (line) => {
+      chunks.push(line);
+      if (verbose) {
+        try {
+          const parsed = JSON.parse(line);
+          if (typeof parsed.text === "string") {
+            process.stderr.write(parsed.text);
+          }
+        } catch {
+          process.stderr.write(line + "\n");
+        }
+      }
+    });
+
+    let stderrData = "";
+    child.stderr.on("data", (data: Buffer) => {
+      stderrData += data.toString();
+      if (verbose) {
+        process.stderr.write(data);
+      }
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`devcontainer ${args[0]} failed: ${err.message}`));
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`devcontainer ${args[0]} failed: ${stderrData || `exit code ${code}`}`));
       } else {
-        resolve(stdout);
+        resolve(chunks.join("\n"));
       }
     });
   });

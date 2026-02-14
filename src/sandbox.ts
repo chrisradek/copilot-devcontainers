@@ -19,6 +19,7 @@ import {
   containerDown,
   getHostGitHubToken,
   type ContainerUpResult,
+  type ContainerUpOptions,
 } from "./container.js";
 
 export interface SandboxUpOptions {
@@ -28,6 +29,7 @@ export interface SandboxUpOptions {
   worktreeDir?: string;
   task?: string;
   interactive: boolean;
+  verbose?: boolean;
 }
 
 export interface SandboxDownOptions {
@@ -97,7 +99,7 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
 
   let upResult: ContainerUpResult;
   try {
-    upResult = await containerUp(worktreePath, remoteEnvs);
+    upResult = await containerUp(worktreePath, remoteEnvs, { verbose: options.verbose });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error starting container: ${msg}`);
@@ -156,6 +158,7 @@ export interface SandboxExecOptions {
   branch: string;
   task?: string;
   interactive: boolean;
+  verbose?: boolean;
 }
 
 /**
@@ -189,7 +192,7 @@ export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
   log(`Ensuring dev container is running...`);
   let upResult: ContainerUpResult;
   try {
-    upResult = await containerUp(worktreePath, remoteEnvs);
+    upResult = await containerUp(worktreePath, remoteEnvs, { verbose: options.verbose });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error starting container: ${msg}`);

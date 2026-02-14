@@ -20,12 +20,14 @@ Options for 'up':
   --task <description>   Run copilot non-interactively with this task
   --interactive          Start an interactive copilot session (default)
   --worktree-dir <path>  Where to create worktrees (default: ../<repo>-worktrees/)
+  --verbose              Stream devcontainer setup logs in real time
 
 Options for 'exec':
   --branch <name>        Branch/worktree to reconnect to (required)
   --dir <path>           Path to the git repo (default: cwd)
   --task <description>   Run copilot non-interactively with this task
   --interactive          Start an interactive copilot session (default)
+  --verbose              Stream devcontainer setup logs in real time
 
 Options for 'down':
   --branch <name>        Branch/worktree to tear down (required)
@@ -51,6 +53,7 @@ interface UpArgs {
   task?: string;
   interactive: boolean;
   worktreeDir?: string;
+  verbose: boolean;
 }
 
 interface DownArgs {
@@ -65,6 +68,7 @@ interface ExecArgs {
   dir: string;
   task?: string;
   interactive: boolean;
+  verbose: boolean;
 }
 
 interface ListArgs {
@@ -92,6 +96,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     const flag = flags[i];
     if (flag === "--interactive") {
       boolFlags.add("interactive");
+    } else if (flag === "--verbose") {
+      boolFlags.add("verbose");
     } else if (flag.startsWith("--") && i + 1 < flags.length) {
       flagMap.set(flag.slice(2), flags[++i]);
     } else if (flag === "-h" || flag === "--help") {
@@ -113,6 +119,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         worktreeDir: flagMap.get("worktree-dir")
           ? path.resolve(flagMap.get("worktree-dir")!)
           : undefined,
+        verbose: boolFlags.has("verbose"),
       };
     case "down": {
       const branch = flagMap.get("branch");
@@ -138,6 +145,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         dir: path.resolve(dir),
         task: flagMap.get("task"),
         interactive: boolFlags.has("interactive") || !flagMap.has("task"),
+        verbose: boolFlags.has("verbose"),
       };
     }
     case "list":
@@ -168,6 +176,7 @@ async function main(): Promise<void> {
         worktreeDir: parsed.worktreeDir,
         task: parsed.task,
         interactive: parsed.interactive,
+        verbose: parsed.verbose,
       });
       break;
 
@@ -184,6 +193,7 @@ async function main(): Promise<void> {
         branch: parsed.branch,
         task: parsed.task,
         interactive: parsed.interactive,
+        verbose: parsed.verbose,
       });
       break;
 
