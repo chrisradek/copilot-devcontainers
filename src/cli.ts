@@ -2,6 +2,7 @@
 
 import * as path from "node:path";
 import { sandboxUp, sandboxDown, sandboxList, sandboxExec } from "./sandbox.js";
+import { initSandbox } from "./init.js";
 
 function printUsage(): void {
   process.stderr.write(`
@@ -12,6 +13,7 @@ Commands:
   exec    Reconnect to an existing sandbox and run copilot
   down    Tear down a sandbox (stop container, remove worktree)
   list    List active sandboxes
+  init    Set up copilot-sandbox MCP server and agent for a project or user
 
 Options for 'up':
   --branch <name>        Branch name for the worktree (default: auto-generated)
@@ -36,12 +38,18 @@ Options for 'down':
 Options for 'list':
   --dir <path>           Path to the git repo (default: cwd)
 
+Options for 'init':
+  --scope <repo|user>    Where to install (default: repo)
+  --dir <path>           Target directory (default: cwd, used with --scope repo)
+
 Examples:
   copilot-sandbox up --task "Fix the login bug"
   copilot-sandbox up --branch feature/new-api --base main --interactive
   copilot-sandbox exec --branch sandbox/2026-02-07T04-30-00
   copilot-sandbox list
   copilot-sandbox down --branch sandbox/2026-02-07T04-30-00
+  copilot-sandbox init
+  copilot-sandbox init --scope user
 `);
 }
 
@@ -76,7 +84,13 @@ interface ListArgs {
   dir: string;
 }
 
-type ParsedArgs = UpArgs | DownArgs | ExecArgs | ListArgs | { command: "help" };
+interface InitArgs {
+  command: "init";
+  scope: "repo" | "user";
+  dir: string;
+}
+
+type ParsedArgs = UpArgs | DownArgs | ExecArgs | ListArgs | InitArgs | { command: "help" };
 
 function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
@@ -153,6 +167,18 @@ function parseArgs(argv: string[]): ParsedArgs {
         command: "list",
         dir: path.resolve(dir),
       };
+    case "init": {
+      const scope = flagMap.get("scope") ?? "repo";
+      if (scope !== "repo" && scope !== "user") {
+        process.stderr.write(`Error: --scope must be "repo" or "user"\n`);
+        process.exit(1);
+      }
+      return {
+        command: "init",
+        scope,
+        dir: path.resolve(dir),
+      };
+    }
     default:
       process.stderr.write(`Unknown command: ${command}\n`);
       return { command: "help" };
@@ -199,6 +225,13 @@ async function main(): Promise<void> {
 
     case "list":
       await sandboxList(parsed.dir);
+      break;
+
+    case "init":
+      initSandbox({
+        scope: parsed.scope,
+        dir: parsed.dir,
+      });
       break;
   }
 }
