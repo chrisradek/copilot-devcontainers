@@ -22,7 +22,7 @@ const MCP_SERVER_ENTRY = {
 function readOrchestratorAgent(): string {
   const agentPath = path.resolve(
     url.fileURLToPath(import.meta.url),
-    "../../assets/orchestrator.agent.md",
+    "../../.github/agents/orchestrator.agent.md",
   );
   return fs.readFileSync(agentPath, "utf-8");
 }

@@ -8,7 +8,7 @@
     "copilot-sandbox": "./dist/cli.js",
     "copilot-sandbox-mcp": "./dist/mcp.js"
   },
-  "files": ["dist", "assets"],
+  "files": ["dist", ".github/agents"],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
