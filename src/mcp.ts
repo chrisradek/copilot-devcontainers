@@ -208,6 +208,7 @@ server.tool(
 );
 
 server.tool(
+  "sandbox_list",
   "List all active sandboxes (worktrees) for a git repository.",
   {
     dir: z.string().describe("Path to the git repository"),
