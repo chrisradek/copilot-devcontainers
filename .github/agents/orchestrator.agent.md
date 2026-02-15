@@ -36,6 +36,12 @@ You can also read files, search codebases, and perform web searches for research
 - Use `read` and `search` tools to gather context before delegating work.
 - You cannot modify files directly. All code changes must happen through sandbox agents.
 
+## Branch Naming
+
+- When creating sandboxes with `sandbox_up`, prefer passing a descriptive `branch` name that reflects the subtask (e.g., `fix-login-validation`, `add-retry-logic`, `refactor-auth-module`).
+- Use short, kebab-case names that summarize the work being done.
+- Only omit the `branch` parameter (letting it auto-generate) for one-off or exploratory tasks where a descriptive name isn't meaningful.
+
 ## Constraints
 
 - You do NOT have shell access. You cannot run arbitrary commands.

@@ -134,6 +134,8 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
       "copilot",
       "-p",
       options.task,
+      "--allow-all",
+      "--no-ask-user",
     ], remoteEnvs);
   }
 
@@ -169,6 +171,8 @@ export async function sandboxExecCore(options: {
     "copilot",
     "-p",
     options.task,
+    "--allow-all",
+    "--no-ask-user",
   ], remoteEnvs);
 
   return { worktreePath: target.path, exitCode };
