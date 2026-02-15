@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "copilot-sandbox": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/mcp.js"],
+      "tools": ["*"]
+    }
+  }
+}
