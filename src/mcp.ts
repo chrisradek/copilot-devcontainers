@@ -10,6 +10,7 @@ import {
   sandboxDownCore,
   sandboxListCore,
   sandboxExecCore,
+  sandboxMergeCore,
 } from "./sandbox.js";
 
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -127,17 +128,23 @@ server.tool(
 
 server.tool(
   "sandbox_down",
-  "Tear down a sandbox: stop its container, remove the worktree, and delete the branch.",
+  "Stop the dev container for a sandbox. The worktree and branch are preserved " +
+  "so work is not lost. Use sandbox_merge to merge changes and clean up, or " +
+  "pass removeWorktree: true to fully tear down the sandbox.",
   {
     dir: z.string().describe("Path to the git repository"),
-    branch: z.string().describe("Branch name of the sandbox to tear down"),
+    branch: z.string().describe("Branch name of the sandbox to stop"),
+    removeWorktree: z.boolean().optional().default(false).describe("If true, also remove the worktree and delete the branch (full teardown). Default: false (container-only)."),
   },
-  async ({ dir, branch }) => {
+  async ({ dir, branch, removeWorktree }) => {
     try {
-      await sandboxDownCore({ dir, branch });
+      await sandboxDownCore({ dir, branch, containerOnly: !removeWorktree });
 
+      const msg = removeWorktree
+        ? `Sandbox "${branch}" has been fully torn down.`
+        : `Container for sandbox "${branch}" has been stopped. Worktree and branch are preserved.`;
       return {
-        content: [{ type: "text" as const, text: `Sandbox "${branch}" has been torn down.` }],
+        content: [{ type: "text" as const, text: msg }],
       };
     } catch (err) {
       return {
@@ -149,7 +156,58 @@ server.tool(
 );
 
 server.tool(
-  "sandbox_list",
+  "sandbox_merge",
+  "Merge a sandbox branch into the current branch of the main repository. " +
+  "Rebases the sandbox branch onto the current branch, then fast-forward merges. " +
+  "On success, stops the container and cleans up the worktree and branch. " +
+  "On conflict, leaves the rebase in-progress — use sandbox_exec to have the agent " +
+  "resolve conflicts and run 'git rebase --continue', then retry sandbox_merge.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+    branch: z.string().describe("Branch name of the sandbox to merge"),
+  },
+  async ({ dir, branch }, extra) => {
+    const stopHeartbeat = startProgressHeartbeat(extra);
+    try {
+      const result = await sandboxMergeCore({ dir, branch });
+
+      if (result.success) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Sandbox "${branch}" has been successfully merged and cleaned up.`,
+          }],
+        };
+      }
+
+      const conflictList = result.conflictFiles?.join("\n  ") ?? "unknown";
+      return {
+        content: [{
+          type: "text" as const,
+          text: [
+            `Rebase of "${branch}" has conflicts. The rebase is in-progress.`,
+            `Conflicting files:`,
+            `  ${conflictList}`,
+            ``,
+            `To resolve: use sandbox_exec to tell the agent to resolve the merge conflicts ` +
+            `in the listed files and then run 'git rebase --continue'. ` +
+            `Once resolved, retry sandbox_merge.`,
+          ].join("\n"),
+        }],
+        isError: true,
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    } finally {
+      stopHeartbeat();
+    }
+  },
+);
+
+server.tool(
   "List all active sandboxes (worktrees) for a git repository.",
   {
     dir: z.string().describe("Path to the git repository"),

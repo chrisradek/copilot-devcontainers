@@ -122,6 +122,62 @@ export async function deleteBranch(
 }
 
 /**
+ * Get the current branch name for a repository.
+ */
+export function getCurrentBranch(repoDir: string): string {
+  return execFileSync("git", ["-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD"], {
+    encoding: "utf-8",
+  }).trim();
+}
+
+export interface RebaseResult {
+  success: boolean;
+  conflictFiles?: string[];
+}
+
+/**
+ * Rebase the worktree's branch onto the given branch.
+ * If conflicts occur, leaves the rebase in-progress and returns the conflicting files.
+ */
+export async function rebaseWorktree(
+  worktreePath: string,
+  ontoBranch: string,
+): Promise<RebaseResult> {
+  try {
+    await execGit(worktreePath, ["rebase", ontoBranch]);
+    return { success: true };
+  } catch {
+    // Check if rebase is in progress (conflicts)
+    try {
+      const output = await execGit(worktreePath, ["diff", "--name-only", "--diff-filter=U"]);
+      const files = output.trim().split("\n").filter(Boolean);
+      if (files.length > 0) {
+        return { success: false, conflictFiles: files };
+      }
+    } catch {
+      // Ignore — fall through to generic error
+    }
+    // Rebase failed for a non-conflict reason; abort and rethrow
+    try {
+      await execGit(worktreePath, ["rebase", "--abort"]);
+    } catch {
+      // Ignore abort failures
+    }
+    throw new Error(`Rebase of worktree onto "${ontoBranch}" failed.`);
+  }
+}
+
+/**
+ * Fast-forward merge a branch into the current branch of the given repo.
+ */
+export async function fastForwardMerge(
+  repoDir: string,
+  branchName: string,
+): Promise<void> {
+  await execGit(repoDir, ["merge", "--ff-only", branchName]);
+}
+
+/**
  * Generate a sandbox branch name.
  */
 export function generateBranchName(): string {

@@ -9,7 +9,11 @@ import {
   listWorktrees,
   deleteBranch,
   generateBranchName,
+  getCurrentBranch,
+  rebaseWorktree,
+  fastForwardMerge,
   type WorktreeInfo,
+  type RebaseResult,
 } from "./worktree.js";
 import {
   hasDevcontainerConfig,
@@ -37,6 +41,8 @@ export interface SandboxUpOptions {
 export interface SandboxDownOptions {
   dir: string;
   branch: string;
+  /** If true, only stop the container — don't remove the worktree or branch. */
+  containerOnly?: boolean;
 }
 
 export interface SandboxInfo {
@@ -241,7 +247,7 @@ export async function sandboxExecCore(options: {
 }
 
 /**
- * Core "down" logic: stop container, remove worktree and branch.
+ * Core "down" logic: stop container, optionally remove worktree and branch.
  */
 export async function sandboxDownCore(options: SandboxDownOptions): Promise<void> {
   const gitRoot = getGitRoot(options.dir);
@@ -258,6 +264,68 @@ export async function sandboxDownCore(options: SandboxDownOptions): Promise<void
     // Container may already be stopped
   }
 
+  if (!options.containerOnly) {
+    await removeWorktree(gitRoot, target.path);
+
+    try {
+      await deleteBranch(gitRoot, options.branch);
+    } catch {
+      // Branch may have been merged or already deleted
+    }
+  }
+}
+
+export interface SandboxMergeOptions {
+  dir: string;
+  branch: string;
+}
+
+export interface SandboxMergeResult {
+  success: boolean;
+  /** Set when rebase succeeds and merge completes. */
+  merged?: boolean;
+  /** Conflicting files when rebase fails. */
+  conflictFiles?: string[];
+}
+
+/**
+ * Core "merge" logic: rebase sandbox branch onto source, fast-forward merge,
+ * then clean up (container + worktree + branch).
+ *
+ * If rebase conflicts occur, the rebase is left in-progress so an agent
+ * inside the container can resolve conflicts and run `git rebase --continue`.
+ */
+export async function sandboxMergeCore(options: SandboxMergeOptions): Promise<SandboxMergeResult> {
+  const gitRoot = getGitRoot(options.dir);
+  const worktrees = await listWorktrees(gitRoot);
+
+  const target = worktrees.find((wt) => wt.branch === options.branch);
+  if (!target) {
+    throw new Error(`No worktree found for branch "${options.branch}".`);
+  }
+
+  const sourceBranch = getCurrentBranch(gitRoot);
+
+  // Rebase the sandbox (Feature) branch onto the source branch
+  const rebaseResult = await rebaseWorktree(target.path, sourceBranch);
+
+  if (!rebaseResult.success) {
+    return {
+      success: false,
+      conflictFiles: rebaseResult.conflictFiles,
+    };
+  }
+
+  // Fast-forward merge the source branch to the rebased sandbox branch
+  await fastForwardMerge(gitRoot, options.branch);
+
+  // Clean up: stop container, remove worktree, delete branch
+  try {
+    await containerDown(target.path);
+  } catch {
+    // Container may already be stopped
+  }
+
   await removeWorktree(gitRoot, target.path);
 
   try {
@@ -265,6 +333,8 @@ export async function sandboxDownCore(options: SandboxDownOptions): Promise<void
   } catch {
     // Branch may have been merged or already deleted
   }
+
+  return { success: true, merged: true };
 }
 
 /**
