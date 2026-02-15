@@ -28,6 +28,7 @@ Options for 'exec':
   --branch <name>        Branch/worktree to reconnect to (required)
   --dir <path>           Path to the git repo (default: cwd)
   --task <description>   Run copilot non-interactively with this task
+  --session-id <id>      Resume a specific copilot session by ID
   --interactive          Start an interactive copilot session (default)
   --verbose              Stream devcontainer setup logs in real time
 
@@ -75,6 +76,7 @@ interface ExecArgs {
   branch: string;
   dir: string;
   task?: string;
+  sessionId?: string;
   interactive: boolean;
   verbose: boolean;
 }
@@ -158,6 +160,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         branch,
         dir: path.resolve(dir),
         task: flagMap.get("task"),
+        sessionId: flagMap.get("session-id"),
         interactive: boolFlags.has("interactive") || !flagMap.has("task"),
         verbose: boolFlags.has("verbose"),
       };
@@ -218,6 +221,7 @@ async function main(): Promise<void> {
         dir: parsed.dir,
         branch: parsed.branch,
         task: parsed.task,
+        sessionId: parsed.sessionId,
         interactive: parsed.interactive,
         verbose: parsed.verbose,
       });

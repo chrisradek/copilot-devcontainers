@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
+import * as crypto from "node:crypto";
 import {
   getGitRoot,
   getRepoName,
@@ -28,6 +29,7 @@ export interface SandboxUpOptions {
   base: string;
   worktreeDir?: string;
   task?: string;
+  sessionId?: string;
   interactive: boolean;
   verbose?: boolean;
 }
@@ -41,6 +43,7 @@ export interface SandboxInfo {
   branch: string;
   worktreePath: string;
   head: string;
+  sessions: SessionEntry[];
 }
 
 /** Result from sandbox operations that can be used programmatically. */
@@ -51,6 +54,7 @@ export interface SandboxUpResult {
   remoteUser?: string;
   remoteWorkspaceFolder?: string;
   exitCode?: number;
+  sessionId?: string;
 }
 
 export interface SandboxListResult {
@@ -58,9 +62,43 @@ export interface SandboxListResult {
 }
 
 const SANDBOX_BRANCH_PREFIX = "sandbox/";
+const SESSION_METADATA_FILE = ".copilot-sandbox.json";
 
 function log(msg: string): void {
   process.stderr.write(`${msg}\n`);
+}
+
+// ── Session metadata ──
+
+interface SessionEntry {
+  sessionId: string;
+  createdAt: string;
+  task?: string;
+}
+
+interface SandboxMetadata {
+  sessions: SessionEntry[];
+}
+
+function readSandboxMetadata(worktreePath: string): SandboxMetadata {
+  const metaPath = path.join(worktreePath, SESSION_METADATA_FILE);
+  try {
+    const raw = fs.readFileSync(metaPath, "utf-8");
+    return JSON.parse(raw) as SandboxMetadata;
+  } catch {
+    return { sessions: [] };
+  }
+}
+
+function writeSandboxMetadata(worktreePath: string, metadata: SandboxMetadata): void {
+  const metaPath = path.join(worktreePath, SESSION_METADATA_FILE);
+  fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2) + "\n", "utf-8");
+}
+
+function addSessionEntry(worktreePath: string, entry: SessionEntry): void {
+  const metadata = readSandboxMetadata(worktreePath);
+  metadata.sessions.push(entry);
+  writeSandboxMetadata(worktreePath, metadata);
 }
 
 // ── Core functions (return structured results, no process.exit) ──
@@ -130,13 +168,22 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
   };
 
   if (options.task) {
+    const sessionId = options.sessionId ?? crypto.randomUUID();
+    result.sessionId = sessionId;
     result.exitCode = await containerExec(worktreePath, [
       "copilot",
       "-p",
       options.task,
+      "--resume",
+      sessionId,
       "--allow-all",
       "--no-ask-user",
     ], remoteEnvs);
+    addSessionEntry(worktreePath, {
+      sessionId,
+      createdAt: new Date().toISOString(),
+      task: options.task,
+    });
   }
 
   return result;
@@ -150,8 +197,9 @@ export async function sandboxExecCore(options: {
   dir: string;
   branch: string;
   task: string;
+  sessionId?: string;
   verbose?: boolean;
-}): Promise<{ worktreePath: string; exitCode: number }> {
+}): Promise<{ worktreePath: string; exitCode: number; sessionId: string }> {
   const gitRoot = getGitRoot(options.dir);
   const worktrees = await listWorktrees(gitRoot);
 
@@ -167,15 +215,29 @@ export async function sandboxExecCore(options: {
     throw new Error(`Container failed to start: ${upResult.message ?? "unknown error"}`);
   }
 
-  const exitCode = await containerExec(target.path, [
+  // Use provided sessionId to resume, or generate a new one
+  const sessionId = options.sessionId ?? crypto.randomUUID();
+  const copilotArgs = [
     "copilot",
     "-p",
     options.task,
+    "--resume",
+    sessionId,
     "--allow-all",
     "--no-ask-user",
-  ], remoteEnvs);
+  ];
 
-  return { worktreePath: target.path, exitCode };
+  const exitCode = await containerExec(target.path, copilotArgs, remoteEnvs);
+
+  if (!options.sessionId) {
+    addSessionEntry(target.path, {
+      sessionId,
+      createdAt: new Date().toISOString(),
+      task: options.task,
+    });
+  }
+
+  return { worktreePath: target.path, exitCode, sessionId };
 }
 
 /**
@@ -218,6 +280,7 @@ export async function sandboxListCore(dir: string): Promise<SandboxListResult> {
       branch: wt.branch,
       worktreePath: wt.path,
       head: wt.head,
+      sessions: readSandboxMetadata(wt.path).sessions,
     }));
 
   return { sandboxes };
@@ -258,6 +321,9 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
 
   if (options.task) {
     log(`\ncopilot exited with code ${result.exitCode}`);
+    if (result.sessionId) {
+      log(`Session ID: ${result.sessionId}`);
+    }
     log(`\nWorktree with changes: ${result.worktreePath}`);
     log(`Branch: ${result.branch}`);
     log(`To resume: copilot-sandbox exec --branch ${result.branch}`);
@@ -287,6 +353,7 @@ export interface SandboxExecOptions {
   dir: string;
   branch: string;
   task?: string;
+  sessionId?: string;
   interactive: boolean;
   verbose?: boolean;
 }
@@ -306,12 +373,13 @@ export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
   log(`Ensuring dev container is running...`);
 
   if (options.task) {
-    let result: { worktreePath: string; exitCode: number };
+    let result: { worktreePath: string; exitCode: number; sessionId: string };
     try {
       result = await sandboxExecCore({
         dir: options.dir,
         branch: options.branch,
         task: options.task,
+        sessionId: options.sessionId,
         verbose: options.verbose,
       });
     } catch (err) {
@@ -320,6 +388,7 @@ export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
       process.exit(1);
     }
     log(`\ncopilot exited with code ${result.exitCode}`);
+    log(`Session ID: ${result.sessionId}`);
   } else {
     // Interactive — need to find worktree and ensure container manually
     const gitRoot = getGitRoot(options.dir);
@@ -396,6 +465,12 @@ export async function sandboxList(dir: string): Promise<void> {
     log(`  Branch: ${s.branch}`);
     log(`  Path:   ${s.worktreePath}`);
     log(`  HEAD:   ${s.head?.slice(0, 8)}`);
+    if (s.sessions.length > 0) {
+      log(`  Sessions:`);
+      for (const sess of s.sessions) {
+        log(`    - ${sess.sessionId}${sess.task ? ` (${sess.task.slice(0, 60)}${sess.task.length > 60 ? "..." : ""})` : ""}`);
+      }
+    }
     log(``);
   }
 }
