@@ -43,113 +43,239 @@ export interface SandboxInfo {
   head: string;
 }
 
+/** Result from sandbox operations that can be used programmatically. */
+export interface SandboxUpResult {
+  branch: string;
+  worktreePath: string;
+  containerId?: string;
+  remoteUser?: string;
+  remoteWorkspaceFolder?: string;
+  exitCode?: number;
+}
+
+export interface SandboxListResult {
+  sandboxes: SandboxInfo[];
+}
+
 const SANDBOX_BRANCH_PREFIX = "sandbox/";
 
 function log(msg: string): void {
   process.stderr.write(`${msg}\n`);
 }
 
+// ── Core functions (return structured results, no process.exit) ──
+
 /**
- * Main "up" flow: create worktree, start container, run copilot.
+ * Prepare remote env vars (GH_TOKEN forwarding).
  */
-export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
-  const gitRoot = getGitRoot(options.dir);
-  const repoName = getRepoName(options.dir);
-
-  // Determine branch name
-  const branchName = options.branch ?? generateBranchName();
-
-  // Determine worktree directory
-  const worktreeBase =
-    options.worktreeDir ?? path.resolve(gitRoot, "..", `${repoName}-worktrees`);
-  const worktreePath = path.join(worktreeBase, branchName.replace(/\//g, "-"));
-
-  log(`Creating worktree at ${worktreePath} (branch: ${branchName}, base: ${options.base})`);
-  fs.mkdirSync(worktreeBase, { recursive: true });
-  await createWorktree(gitRoot, worktreePath, branchName, options.base);
-  log(`Worktree created.`);
-
-  // Verify devcontainer config exists
-  if (!hasDevcontainerConfig(worktreePath)) {
-    log(
-      `Error: No .devcontainer/devcontainer.json found in ${worktreePath}.\n` +
-        `The target project must have a devcontainer configuration.`,
-    );
-    // Clean up the worktree we just created
-    await removeWorktree(gitRoot, worktreePath);
-    await deleteBranch(gitRoot, branchName);
-    process.exit(1);
-  }
-
-  // Inject copilot CLI feature and git safe.directory config
-  ensureCopilotFeature(worktreePath);
-
-  log(`Starting dev container...`);
-
-  // Forward GitHub token from host into the container
+function prepareRemoteEnvs(): { remoteEnvs: Record<string, string>; hasToken: boolean } {
   const remoteEnvs: Record<string, string> = {};
   const ghToken = getHostGitHubToken();
   if (ghToken) {
     remoteEnvs["GH_TOKEN"] = ghToken;
+  }
+  return { remoteEnvs, hasToken: !!ghToken };
+}
+
+/**
+ * Core "up" logic: create worktree, start container, optionally run a task.
+ * Returns structured result or throws on failure.
+ */
+export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxUpResult> {
+  const gitRoot = getGitRoot(options.dir);
+  const repoName = getRepoName(options.dir);
+
+  const branchName = options.branch ?? generateBranchName();
+  const worktreeBase =
+    options.worktreeDir ?? path.resolve(gitRoot, "..", `${repoName}-worktrees`);
+  const worktreePath = path.join(worktreeBase, branchName.replace(/\//g, "-"));
+
+  fs.mkdirSync(worktreeBase, { recursive: true });
+  await createWorktree(gitRoot, worktreePath, branchName, options.base);
+
+  if (!hasDevcontainerConfig(worktreePath)) {
+    await removeWorktree(gitRoot, worktreePath);
+    await deleteBranch(gitRoot, branchName);
+    throw new Error(
+      `No .devcontainer/devcontainer.json found in ${worktreePath}. ` +
+      `The target project must have a devcontainer configuration.`,
+    );
+  }
+
+  ensureCopilotFeature(worktreePath);
+
+  const { remoteEnvs } = prepareRemoteEnvs();
+
+  let upResult: ContainerUpResult;
+  try {
+    upResult = await containerUp(worktreePath, remoteEnvs, { verbose: options.verbose });
+  } catch (err) {
+    await removeWorktree(gitRoot, worktreePath);
+    await deleteBranch(gitRoot, branchName);
+    throw err;
+  }
+
+  if (upResult.outcome !== "success") {
+    await removeWorktree(gitRoot, worktreePath);
+    await deleteBranch(gitRoot, branchName);
+    throw new Error(`Container failed to start: ${upResult.message ?? "unknown error"}`);
+  }
+
+  const result: SandboxUpResult = {
+    branch: branchName,
+    worktreePath,
+    containerId: upResult.containerId,
+    remoteUser: upResult.remoteUser,
+    remoteWorkspaceFolder: upResult.remoteWorkspaceFolder,
+  };
+
+  if (options.task) {
+    result.exitCode = await containerExec(worktreePath, [
+      "copilot",
+      "-p",
+      options.task,
+    ], remoteEnvs);
+  }
+
+  return result;
+}
+
+/**
+ * Core "exec" logic: ensure container is running, run copilot with a task.
+ * Returns exit code or throws on failure.
+ */
+export async function sandboxExecCore(options: {
+  dir: string;
+  branch: string;
+  task: string;
+  verbose?: boolean;
+}): Promise<{ worktreePath: string; exitCode: number }> {
+  const gitRoot = getGitRoot(options.dir);
+  const worktrees = await listWorktrees(gitRoot);
+
+  const target = worktrees.find((wt) => wt.branch === options.branch);
+  if (!target) {
+    throw new Error(`No worktree found for branch "${options.branch}".`);
+  }
+
+  const { remoteEnvs } = prepareRemoteEnvs();
+
+  const upResult = await containerUp(target.path, remoteEnvs, { verbose: options.verbose });
+  if (upResult.outcome !== "success") {
+    throw new Error(`Container failed to start: ${upResult.message ?? "unknown error"}`);
+  }
+
+  const exitCode = await containerExec(target.path, [
+    "copilot",
+    "-p",
+    options.task,
+  ], remoteEnvs);
+
+  return { worktreePath: target.path, exitCode };
+}
+
+/**
+ * Core "down" logic: stop container, remove worktree and branch.
+ */
+export async function sandboxDownCore(options: SandboxDownOptions): Promise<void> {
+  const gitRoot = getGitRoot(options.dir);
+  const worktrees = await listWorktrees(gitRoot);
+
+  const target = worktrees.find((wt) => wt.branch === options.branch);
+  if (!target) {
+    throw new Error(`No worktree found for branch "${options.branch}".`);
+  }
+
+  try {
+    await containerDown(target.path);
+  } catch {
+    // Container may already be stopped
+  }
+
+  await removeWorktree(gitRoot, target.path);
+
+  try {
+    await deleteBranch(gitRoot, options.branch);
+  } catch {
+    // Branch may have been merged or already deleted
+  }
+}
+
+/**
+ * Core "list" logic: return all sandbox worktrees.
+ */
+export async function sandboxListCore(dir: string): Promise<SandboxListResult> {
+  const gitRoot = getGitRoot(dir);
+  const worktrees = await listWorktrees(gitRoot);
+
+  const sandboxes = worktrees
+    .filter((wt) => !wt.isBare && wt.path !== gitRoot)
+    .map((wt) => ({
+      branch: wt.branch,
+      worktreePath: wt.path,
+      head: wt.head,
+    }));
+
+  return { sandboxes };
+}
+
+// ── CLI wrappers (logging + process.exit) ──
+
+/**
+ * Main "up" flow: create worktree, start container, run copilot.
+ */
+export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
+  const branchName = options.branch ?? generateBranchName();
+
+  log(`Creating sandbox (branch: ${branchName}, base: ${options.base})`);
+
+  const { hasToken } = prepareRemoteEnvs();
+  if (hasToken) {
     log(`Forwarding GitHub auth token from host.`);
   } else {
     log(`Warning: Could not get GitHub token from host (gh auth token failed).`);
     log(`You may need to run /login inside copilot.`);
   }
 
-  let upResult: ContainerUpResult;
+  log(`Starting dev container...`);
+
+  let result: SandboxUpResult;
   try {
-    upResult = await containerUp(worktreePath, remoteEnvs, { verbose: options.verbose });
+    result = await sandboxUpCore({ ...options, branch: branchName });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log(`Error starting container: ${msg}`);
-    log(`Cleaning up worktree...`);
-    await removeWorktree(gitRoot, worktreePath);
-    await deleteBranch(gitRoot, branchName);
+    log(`Error: ${msg}`);
     process.exit(1);
   }
 
-  if (upResult.outcome !== "success") {
-    log(`Container failed to start: ${upResult.message ?? "unknown error"}`);
-    log(`Cleaning up worktree...`);
-    await removeWorktree(gitRoot, worktreePath);
-    await deleteBranch(gitRoot, branchName);
-    process.exit(1);
-  }
-
-  log(`Container started (id: ${upResult.containerId?.slice(0, 12)})`);
-  log(`Remote user: ${upResult.remoteUser}`);
-  log(`Workspace: ${upResult.remoteWorkspaceFolder}`);
+  log(`Container started (id: ${result.containerId?.slice(0, 12)})`);
+  log(`Remote user: ${result.remoteUser}`);
+  log(`Workspace: ${result.remoteWorkspaceFolder}`);
 
   if (options.task) {
-    // Non-interactive: run copilot with a task
-    log(`\nRunning copilot with task: "${options.task}"`);
-    const exitCode = await containerExec(worktreePath, [
-      "copilot",
-      "-p",
-      options.task,
-    ], remoteEnvs);
-    log(`\ncopilot exited with code ${exitCode}`);
-    log(`\nWorktree with changes: ${worktreePath}`);
-    log(`Branch: ${branchName}`);
-    log(`To resume: copilot-sandbox exec --branch ${branchName}`);
-    log(`To clean up: copilot-sandbox down --branch ${branchName}`);
+    log(`\ncopilot exited with code ${result.exitCode}`);
+    log(`\nWorktree with changes: ${result.worktreePath}`);
+    log(`Branch: ${result.branch}`);
+    log(`To resume: copilot-sandbox exec --branch ${result.branch}`);
+    log(`To clean up: copilot-sandbox down --branch ${result.branch}`);
   } else {
-    // Interactive mode
+    // Interactive mode — sandboxUpCore doesn't handle interactive,
+    // so we do it here after the container is ready.
     log(`\nStarting interactive copilot session...`);
     log(`(Use Ctrl+C or exit to end the session)\n`);
 
-    const child = containerExecInteractive(worktreePath, ["copilot"], remoteEnvs);
+    const { remoteEnvs } = prepareRemoteEnvs();
+    const child = containerExecInteractive(result.worktreePath, ["copilot"], remoteEnvs);
 
     await new Promise<void>((resolve) => {
       child.on("close", () => resolve());
     });
 
     log(`\nSession ended.`);
-    log(`Worktree with changes: ${worktreePath}`);
-    log(`Branch: ${branchName}`);
-    log(`To resume: copilot-sandbox exec --branch ${branchName}`);
-    log(`To clean up: copilot-sandbox down --branch ${branchName}`);
+    log(`Worktree with changes: ${result.worktreePath}`);
+    log(`Branch: ${result.branch}`);
+    log(`To resume: copilot-sandbox exec --branch ${result.branch}`);
+    log(`To clean up: copilot-sandbox down --branch ${result.branch}`);
   }
 }
 
@@ -165,60 +291,62 @@ export interface SandboxExecOptions {
  * Reconnect to an existing sandbox: ensure container is running, then exec copilot.
  */
 export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
-  const gitRoot = getGitRoot(options.dir);
-  const worktrees = await listWorktrees(gitRoot);
-
-  const target = worktrees.find((wt) => wt.branch === options.branch);
-  if (!target) {
-    log(`No worktree found for branch "${options.branch}".`);
-    log(`Use 'copilot-sandbox list' to see active sandboxes.`);
-    process.exit(1);
-  }
-
-  const worktreePath = target.path;
-
-  // Forward GitHub token from host into the container
-  const remoteEnvs: Record<string, string> = {};
-  const ghToken = getHostGitHubToken();
-  if (ghToken) {
-    remoteEnvs["GH_TOKEN"] = ghToken;
+  const { hasToken } = prepareRemoteEnvs();
+  if (hasToken) {
     log(`Forwarding GitHub auth token from host.`);
   } else {
     log(`Warning: Could not get GitHub token from host (gh auth token failed).`);
     log(`You may need to run /login inside copilot.`);
   }
 
-  // Ensure the container is running (devcontainer up is idempotent)
   log(`Ensuring dev container is running...`);
-  let upResult: ContainerUpResult;
-  try {
-    upResult = await containerUp(worktreePath, remoteEnvs, { verbose: options.verbose });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Error starting container: ${msg}`);
-    process.exit(1);
-  }
-
-  if (upResult.outcome !== "success") {
-    log(`Container failed to start: ${upResult.message ?? "unknown error"}`);
-    process.exit(1);
-  }
-
-  log(`Container ready (id: ${upResult.containerId?.slice(0, 12)})`);
 
   if (options.task) {
-    log(`\nRunning copilot with task: "${options.task}"`);
-    const exitCode = await containerExec(worktreePath, [
-      "copilot",
-      "-p",
-      options.task,
-    ], remoteEnvs);
-    log(`\ncopilot exited with code ${exitCode}`);
+    let result: { worktreePath: string; exitCode: number };
+    try {
+      result = await sandboxExecCore({
+        dir: options.dir,
+        branch: options.branch,
+        task: options.task,
+        verbose: options.verbose,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Error: ${msg}`);
+      process.exit(1);
+    }
+    log(`\ncopilot exited with code ${result.exitCode}`);
   } else {
+    // Interactive — need to find worktree and ensure container manually
+    const gitRoot = getGitRoot(options.dir);
+    const worktrees = await listWorktrees(gitRoot);
+    const target = worktrees.find((wt) => wt.branch === options.branch);
+    if (!target) {
+      log(`No worktree found for branch "${options.branch}".`);
+      log(`Use 'copilot-sandbox list' to see active sandboxes.`);
+      process.exit(1);
+    }
+
+    const { remoteEnvs } = prepareRemoteEnvs();
+    let upResult: ContainerUpResult;
+    try {
+      upResult = await containerUp(target.path, remoteEnvs, { verbose: options.verbose });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Error starting container: ${msg}`);
+      process.exit(1);
+    }
+
+    if (upResult.outcome !== "success") {
+      log(`Container failed to start: ${upResult.message ?? "unknown error"}`);
+      process.exit(1);
+    }
+
+    log(`Container ready (id: ${upResult.containerId?.slice(0, 12)})`);
     log(`\nResuming interactive copilot session...`);
     log(`(Use Ctrl+C or exit to end the session)\n`);
 
-    const child = containerExecInteractive(worktreePath, ["copilot"], remoteEnvs);
+    const child = containerExecInteractive(target.path, ["copilot"], remoteEnvs);
 
     await new Promise<void>((resolve) => {
       child.on("close", () => resolve());
@@ -235,38 +363,14 @@ export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
  * Tear down a sandbox: stop container, remove worktree and branch.
  */
 export async function sandboxDown(options: SandboxDownOptions): Promise<void> {
-  const gitRoot = getGitRoot(options.dir);
-  const worktrees = await listWorktrees(gitRoot);
+  log(`Tearing down sandbox for branch "${options.branch}"...`);
 
-  // Find the worktree matching the branch
-  const target = worktrees.find(
-    (wt) => wt.branch === options.branch,
-  );
-
-  if (!target) {
-    log(`No worktree found for branch "${options.branch}".`);
-    log(`Use 'copilot-sandbox list' to see active sandboxes.`);
+  try {
+    await sandboxDownCore(options);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`);
     process.exit(1);
-  }
-
-  log(`Stopping container for ${target.path}...`);
-  try {
-    await containerDown(target.path);
-    log(`Container stopped.`);
-  } catch {
-    log(`No running container found (may already be stopped).`);
-  }
-
-  log(`Removing worktree at ${target.path}...`);
-  await removeWorktree(gitRoot, target.path);
-  log(`Worktree removed.`);
-
-  log(`Deleting branch ${options.branch}...`);
-  try {
-    await deleteBranch(gitRoot, options.branch);
-    log(`Branch deleted.`);
-  } catch {
-    log(`Could not delete branch (may have been merged or already deleted).`);
   }
 
   log(`Sandbox cleaned up.`);
@@ -276,12 +380,7 @@ export async function sandboxDown(options: SandboxDownOptions): Promise<void> {
  * List all sandbox worktrees.
  */
 export async function sandboxList(dir: string): Promise<void> {
-  const gitRoot = getGitRoot(dir);
-  const worktrees = await listWorktrees(gitRoot);
-
-  const sandboxes = worktrees.filter(
-    (wt) => !wt.isBare && wt.path !== gitRoot,
-  );
+  const { sandboxes } = await sandboxListCore(dir);
 
   if (sandboxes.length === 0) {
     log(`No active sandboxes.`);
@@ -289,10 +388,10 @@ export async function sandboxList(dir: string): Promise<void> {
   }
 
   log(`Active sandboxes:\n`);
-  for (const wt of sandboxes) {
-    log(`  Branch: ${wt.branch}`);
-    log(`  Path:   ${wt.path}`);
-    log(`  HEAD:   ${wt.head?.slice(0, 8)}`);
+  for (const s of sandboxes) {
+    log(`  Branch: ${s.branch}`);
+    log(`  Path:   ${s.worktreePath}`);
+    log(`  HEAD:   ${s.head?.slice(0, 8)}`);
     log(``);
   }
 }
