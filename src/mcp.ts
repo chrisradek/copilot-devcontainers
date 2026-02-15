@@ -2,6 +2,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   sandboxUpCore,
@@ -9,6 +11,38 @@ import {
   sandboxListCore,
   sandboxExecCore,
 } from "./sandbox.js";
+
+type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+const PROGRESS_INTERVAL_MS = 15_000;
+
+/**
+ * Start a periodic progress heartbeat to prevent MCP client timeouts
+ * during long-running operations. Returns a cleanup function.
+ */
+function startProgressHeartbeat(extra: ToolExtra): () => void {
+  const progressToken = extra._meta?.progressToken;
+  if (progressToken == null) {
+    return () => {};
+  }
+
+  let tick = 0;
+  const interval = setInterval(() => {
+    tick++;
+    extra.sendNotification({
+      method: "notifications/progress" as const,
+      params: {
+        progressToken,
+        progress: tick,
+        message: "Working...",
+      },
+    }).catch(() => {
+      // Ignore notification send failures
+    });
+  }, PROGRESS_INTERVAL_MS);
+
+  return () => clearInterval(interval);
+}
 
 const server = new McpServer(
   { name: "copilot-sandbox", version: "0.1.0" },
@@ -25,7 +59,8 @@ server.tool(
     task: z.string().optional().describe("Task description for copilot to work on non-interactively"),
     worktreeDir: z.string().optional().describe("Where to create worktrees (default: ../<repo>-worktrees/)"),
   },
-  async ({ dir, branch, base, task, worktreeDir }) => {
+  async ({ dir, branch, base, task, worktreeDir }, extra) => {
+    const stopHeartbeat = startProgressHeartbeat(extra);
     try {
       const result = await sandboxUpCore({
         dir,
@@ -58,6 +93,8 @@ server.tool(
         content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
+    } finally {
+      stopHeartbeat();
     }
   },
 );
@@ -70,7 +107,8 @@ server.tool(
     branch: z.string().describe("Branch name of the existing sandbox"),
     task: z.string().describe("Task description for copilot to work on"),
   },
-  async ({ dir, branch, task }) => {
+  async ({ dir, branch, task }, extra) => {
+    const stopHeartbeat = startProgressHeartbeat(extra);
     try {
       const result = await sandboxExecCore({ dir, branch, task, verbose: false });
 
@@ -85,6 +123,8 @@ server.tool(
         content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
+    } finally {
+      stopHeartbeat();
     }
   },
 );
