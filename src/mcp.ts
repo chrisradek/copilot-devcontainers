@@ -12,6 +12,7 @@ import {
   sandboxExecCore,
   sandboxMergeCore,
 } from "./sandbox.js";
+import { OrchestratorStore, getStorePath } from "./store.js";
 
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -43,6 +44,10 @@ function startProgressHeartbeat(extra: ToolExtra): () => void {
   }, PROGRESS_INTERVAL_MS);
 
   return () => clearInterval(interval);
+}
+
+function getStore(dir: string): OrchestratorStore {
+  return new OrchestratorStore(getStorePath(dir));
 }
 
 const server = new McpServer(
@@ -236,6 +241,280 @@ server.tool(
         }
         lines.push(``);
       }
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "orchestration_create",
+  "Create a new orchestration session to group related sandbox tasks.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+    description: z.string().describe("Description of the orchestration session"),
+    id: z.string().optional().describe("Optional ID for the orchestration (auto-generated if not provided)"),
+  },
+  async ({ dir, description, id }) => {
+    try {
+      const store = getStore(dir);
+      const orchestration = store.createOrchestration({ id, description });
+
+      const lines = [
+        `Orchestration created successfully.`,
+        `ID: ${orchestration.id}`,
+        `Description: ${orchestration.description}`,
+        `Status: ${orchestration.status}`,
+        `Created: ${orchestration.createdAt}`,
+      ];
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "orchestration_list",
+  "List all orchestration sessions and their task summaries.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+  },
+  async ({ dir }) => {
+    try {
+      const store = getStore(dir);
+      const orchestrations = store.listOrchestrations();
+
+      if (orchestrations.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No orchestrations found." }],
+        };
+      }
+
+      const lines = [`Orchestrations (${orchestrations.length}):\n`];
+      for (const orch of orchestrations) {
+        const tasks = store.listTasks({ orchestrationId: orch.id });
+        const statusCounts = tasks.reduce((acc, t) => {
+          acc[t.status] = (acc[t.status] ?? 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+        lines.push(`  ID: ${orch.id}`);
+        lines.push(`  Description: ${orch.description}`);
+        lines.push(`  Status: ${orch.status}`);
+        lines.push(`  Tasks: ${tasks.length} total`);
+        if (tasks.length > 0) {
+          const statusStr = Object.entries(statusCounts)
+            .map(([status, count]) => `${status}: ${count}`)
+            .join(", ");
+          lines.push(`    ${statusStr}`);
+        }
+        lines.push(`  Created: ${orch.createdAt}`);
+        lines.push(`  Updated: ${orch.updatedAt}`);
+        lines.push(``);
+      }
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "task_create",
+  "Create a task within an orchestration to track sandbox work.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+    orchestrationId: z.string().describe("ID of the orchestration this task belongs to"),
+    title: z.string().describe("Short title for the task"),
+    description: z.string().describe("Detailed description of the task"),
+    id: z.string().optional().describe("Optional ID for the task (auto-generated if not provided)"),
+    dependencies: z.array(z.string()).optional().describe("Task IDs this task depends on"),
+    branch: z.string().optional().describe("Sandbox branch name for this task"),
+    sessionId: z.string().optional().describe("Session ID for this task"),
+  },
+  async ({ dir, orchestrationId, title, description, id, dependencies, branch, sessionId }) => {
+    try {
+      const store = getStore(dir);
+      const task = store.createTask({
+        id,
+        orchestrationId,
+        title,
+        description,
+        dependencies,
+        branch,
+        sessionId,
+      });
+
+      const lines = [
+        `Task created successfully.`,
+        `ID: ${task.id}`,
+        `Orchestration: ${task.orchestrationId}`,
+        `Title: ${task.title}`,
+        `Description: ${task.description}`,
+        `Status: ${task.status}`,
+        `Dependencies: ${task.dependencies.length > 0 ? task.dependencies.join(", ") : "none"}`,
+        `Created: ${task.createdAt}`,
+      ];
+      if (task.branch) lines.push(`Branch: ${task.branch}`);
+      if (task.sessionId) lines.push(`Session ID: ${task.sessionId}`);
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "task_update",
+  "Update a task's status, branch, session ID, or result.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+    id: z.string().describe("Task ID to update"),
+    status: z.enum(["pending", "in_progress", "done", "failed", "cancelled"]).optional().describe("New status"),
+    branch: z.string().optional().describe("Sandbox branch name"),
+    sessionId: z.string().optional().describe("Session ID"),
+    result: z.string().optional().describe("Result or outcome of the task"),
+  },
+  async ({ dir, id, status, branch, sessionId, result }) => {
+    try {
+      const store = getStore(dir);
+      const updates: Record<string, unknown> = {};
+      if (status !== undefined) updates.status = status;
+      if (branch !== undefined) updates.branch = branch;
+      if (sessionId !== undefined) updates.sessionId = sessionId;
+      if (result !== undefined) updates.result = result;
+
+      const task = store.updateTask(id, updates);
+
+      const lines = [
+        `Task updated successfully.`,
+        `ID: ${task.id}`,
+        `Title: ${task.title}`,
+        `Status: ${task.status}`,
+        `Updated: ${task.updatedAt}`,
+      ];
+      if (task.branch) lines.push(`Branch: ${task.branch}`);
+      if (task.sessionId) lines.push(`Session ID: ${task.sessionId}`);
+      if (task.result) lines.push(`Result: ${task.result}`);
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "task_list",
+  "List tasks, optionally filtered by orchestration ID or status.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+    orchestrationId: z.string().optional().describe("Filter by orchestration ID"),
+    status: z.string().optional().describe("Filter by task status"),
+  },
+  async ({ dir, orchestrationId, status }) => {
+    try {
+      const store = getStore(dir);
+      const tasks = store.listTasks({ orchestrationId, status });
+
+      if (tasks.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No tasks found." }],
+        };
+      }
+
+      const lines = [`Tasks (${tasks.length}):\n`];
+      for (const task of tasks) {
+        lines.push(`  ID: ${task.id}`);
+        lines.push(`  Title: ${task.title}`);
+        lines.push(`  Status: ${task.status}`);
+        lines.push(`  Orchestration: ${task.orchestrationId}`);
+        if (task.branch) lines.push(`  Branch: ${task.branch}`);
+        if (task.sessionId) lines.push(`  Session ID: ${task.sessionId}`);
+        if (task.dependencies.length > 0) {
+          lines.push(`  Dependencies: ${task.dependencies.join(", ")}`);
+        }
+        lines.push(`  Created: ${task.createdAt}`);
+        lines.push(`  Updated: ${task.updatedAt}`);
+        lines.push(``);
+      }
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "task_get",
+  "Get full details of a specific task.",
+  {
+    dir: z.string().describe("Path to the git repository"),
+    id: z.string().describe("Task ID to retrieve"),
+  },
+  async ({ dir, id }) => {
+    try {
+      const store = getStore(dir);
+      const task = store.getTask(id);
+
+      if (!task) {
+        return {
+          content: [{ type: "text" as const, text: `Task not found: ${id}` }],
+          isError: true,
+        };
+      }
+
+      const lines = [
+        `Task Details:`,
+        `ID: ${task.id}`,
+        `Orchestration: ${task.orchestrationId}`,
+        `Title: ${task.title}`,
+        `Description: ${task.description}`,
+        `Status: ${task.status}`,
+        `Dependencies: ${task.dependencies.length > 0 ? task.dependencies.join(", ") : "none"}`,
+        `Created: ${task.createdAt}`,
+        `Updated: ${task.updatedAt}`,
+      ];
+      if (task.branch) lines.push(`Branch: ${task.branch}`);
+      if (task.sessionId) lines.push(`Session ID: ${task.sessionId}`);
+      if (task.result) lines.push(`Result: ${task.result}`);
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
