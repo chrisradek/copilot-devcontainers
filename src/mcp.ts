@@ -54,16 +54,18 @@ const server = new McpServer(
   { name: "copilot-sandbox", version: "0.1.0" },
 );
 
-server.tool(
+server.registerTool(
   "sandbox_up",
-  "Create a new sandbox (git worktree + dev container). " +
-  "Each sandbox is fully isolated with its own branch and container. " +
-  "Use sandbox_exec to run copilot tasks in the sandbox after creation.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    branch: z.string().optional().describe("Branch name for the worktree (default: auto-generated)"),
-    base: z.string().default("HEAD").describe("Base ref to branch from (default: HEAD)"),
-    worktreeDir: z.string().optional().describe("Where to create worktrees (default: ../<repo>-worktrees/)"),
+    description: "Create a new sandbox (git worktree + dev container). " +
+    "Each sandbox is fully isolated with its own branch and container. " +
+    "Use sandbox_exec to run copilot tasks in the sandbox after creation.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      branch: z.string().optional().describe("Branch name for the worktree (default: auto-generated)"),
+      base: z.string().default("HEAD").describe("Base ref to branch from (default: HEAD)"),
+      worktreeDir: z.string().optional().describe("Where to create worktrees (default: ../<repo>-worktrees/)"),
+    },
   },
   async ({ dir, branch, base, worktreeDir }, extra) => {
     const stopHeartbeat = startProgressHeartbeat(extra);
@@ -100,14 +102,16 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "sandbox_exec",
-  "Run a copilot agent with a task in an existing sandbox. The container will be started if not already running.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    branch: z.string().describe("Branch name of the existing sandbox"),
-    task: z.string().describe("Task description for copilot to work on"),
-    sessionId: z.string().describe("Session ID for the copilot session. Pass the same ID returned from sandbox_up to resume, or generate a new UUID for a fresh session."),
+    description: "Run a copilot agent with a task in an existing sandbox. The container will be started if not already running.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      branch: z.string().describe("Branch name of the existing sandbox"),
+      task: z.string().describe("Task description for copilot to work on"),
+      sessionId: z.string().describe("Session ID for the copilot session. Pass the same ID returned from sandbox_up to resume, or generate a new UUID for a fresh session."),
+    },
   },
   async ({ dir, branch, task, sessionId }, extra) => {
     const stopHeartbeat = startProgressHeartbeat(extra);
@@ -131,15 +135,17 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "sandbox_down",
-  "Stop the dev container for a sandbox. The worktree and branch are preserved " +
-  "so work is not lost. Use sandbox_merge to merge changes and clean up, or " +
-  "pass removeWorktree: true to fully tear down the sandbox.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    branch: z.string().describe("Branch name of the sandbox to stop"),
-    removeWorktree: z.boolean().optional().default(false).describe("If true, also remove the worktree and delete the branch (full teardown). Default: false (container-only)."),
+    description: "Stop the dev container for a sandbox. The worktree and branch are preserved " +
+    "so work is not lost. Use sandbox_merge to merge changes and clean up, or " +
+    "pass removeWorktree: true to fully tear down the sandbox.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      branch: z.string().describe("Branch name of the sandbox to stop"),
+      removeWorktree: z.boolean().optional().default(false).describe("If true, also remove the worktree and delete the branch (full teardown). Default: false (container-only)."),
+    },
   },
   async ({ dir, branch, removeWorktree }) => {
     try {
@@ -160,16 +166,18 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "sandbox_merge",
-  "Merge a sandbox branch into the current branch of the main repository. " +
-  "Rebases the sandbox branch onto the current branch, then fast-forward merges. " +
-  "On success, stops the container and cleans up the worktree and branch. " +
-  "On conflict, leaves the rebase in-progress — use sandbox_exec to have the agent " +
-  "resolve conflicts and run 'git rebase --continue', then retry sandbox_merge.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    branch: z.string().describe("Branch name of the sandbox to merge"),
+    description: "Merge a sandbox branch into the current branch of the main repository. " +
+    "Rebases the sandbox branch onto the current branch, then fast-forward merges. " +
+    "On success, stops the container and cleans up the worktree and branch. " +
+    "On conflict, leaves the rebase in-progress — use sandbox_exec to have the agent " +
+    "resolve conflicts and run 'git rebase --continue', then retry sandbox_merge.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      branch: z.string().describe("Branch name of the sandbox to merge"),
+    },
   },
   async ({ dir, branch }, extra) => {
     const stopHeartbeat = startProgressHeartbeat(extra);
@@ -212,11 +220,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "sandbox_list",
-  "List all active sandboxes (worktrees) for a git repository.",
   {
-    dir: z.string().describe("Path to the git repository"),
+    description: "List all active sandboxes (worktrees) for a git repository.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+    },
   },
   async ({ dir }) => {
     try {
@@ -254,13 +264,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "orchestration_create",
-  "Create a new orchestration session to group related sandbox tasks.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    description: z.string().describe("Description of the orchestration session"),
-    id: z.string().optional().describe("Optional ID for the orchestration (auto-generated if not provided)"),
+    description: "Create a new orchestration session to group related sandbox tasks.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      description: z.string().describe("Description of the orchestration session"),
+      id: z.string().optional().describe("Optional ID for the orchestration (auto-generated if not provided)"),
+    },
   },
   async ({ dir, description, id }) => {
     try {
@@ -287,11 +299,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "orchestration_list",
-  "List all orchestration sessions and their task summaries.",
   {
-    dir: z.string().describe("Path to the git repository"),
+    description: "List all orchestration sessions and their task summaries.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+    },
   },
   async ({ dir }) => {
     try {
@@ -339,18 +353,20 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "task_create",
-  "Create a task within an orchestration to track sandbox work.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    orchestrationId: z.string().describe("ID of the orchestration this task belongs to"),
-    title: z.string().describe("Short title for the task"),
-    description: z.string().describe("Detailed description of the task"),
-    id: z.string().optional().describe("Optional ID for the task (auto-generated if not provided)"),
-    dependencies: z.array(z.string()).optional().describe("Task IDs this task depends on"),
-    branch: z.string().optional().describe("Sandbox branch name for this task"),
-    sessionId: z.string().optional().describe("Session ID for this task"),
+    description: "Create a task within an orchestration to track sandbox work.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      orchestrationId: z.string().describe("ID of the orchestration this task belongs to"),
+      title: z.string().describe("Short title for the task"),
+      description: z.string().describe("Detailed description of the task"),
+      id: z.string().optional().describe("Optional ID for the task (auto-generated if not provided)"),
+      dependencies: z.array(z.string()).optional().describe("Task IDs this task depends on"),
+      branch: z.string().optional().describe("Sandbox branch name for this task"),
+      sessionId: z.string().optional().describe("Session ID for this task"),
+    },
   },
   async ({ dir, orchestrationId, title, description, id, dependencies, branch, sessionId }) => {
     try {
@@ -390,16 +406,18 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "task_update",
-  "Update a task's status, branch, session ID, or result.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    id: z.string().describe("Task ID to update"),
-    status: z.enum(["pending", "in_progress", "done", "failed", "cancelled"]).optional().describe("New status"),
-    branch: z.string().optional().describe("Sandbox branch name"),
-    sessionId: z.string().optional().describe("Session ID"),
-    result: z.string().optional().describe("Result or outcome of the task"),
+    description: "Update a task's status, branch, session ID, or result.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      id: z.string().describe("Task ID to update"),
+      status: z.enum(["pending", "in_progress", "done", "failed", "cancelled"]).optional().describe("New status"),
+      branch: z.string().optional().describe("Sandbox branch name"),
+      sessionId: z.string().optional().describe("Session ID"),
+      result: z.string().optional().describe("Result or outcome of the task"),
+    },
   },
   async ({ dir, id, status, branch, sessionId, result }) => {
     try {
@@ -435,13 +453,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "task_list",
-  "List tasks, optionally filtered by orchestration ID or status.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    orchestrationId: z.string().optional().describe("Filter by orchestration ID"),
-    status: z.string().optional().describe("Filter by task status"),
+    description: "List tasks, optionally filtered by orchestration ID or status.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      orchestrationId: z.string().optional().describe("Filter by orchestration ID"),
+      status: z.string().optional().describe("Filter by task status"),
+    },
   },
   async ({ dir, orchestrationId, status }) => {
     try {
@@ -482,12 +502,14 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "task_get",
-  "Get full details of a specific task.",
   {
-    dir: z.string().describe("Path to the git repository"),
-    id: z.string().describe("Task ID to retrieve"),
+    description: "Get full details of a specific task.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      id: z.string().describe("Task ID to retrieve"),
+    },
   },
   async ({ dir, id }) => {
     try {
