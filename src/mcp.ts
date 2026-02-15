@@ -46,6 +46,48 @@ function startProgressHeartbeat(extra: ToolExtra): () => void {
   return () => clearInterval(interval);
 }
 
+/**
+ * Create an output notifier that sends copilot output as progress notifications.
+ * Also maintains a heartbeat for periods with no output.
+ */
+function createOutputNotifier(extra: ToolExtra): {
+  onOutput: (line: string) => void;
+  stop: () => void;
+} {
+  const progressToken = extra._meta?.progressToken;
+  if (progressToken == null) {
+    return { onOutput: () => {}, stop: () => {} };
+  }
+
+  let tick = 0;
+  const interval = setInterval(() => {
+    tick++;
+    extra.sendNotification({
+      method: "notifications/progress" as const,
+      params: {
+        progressToken,
+        progress: tick,
+        message: "Working...",
+      },
+    }).catch(() => {});
+  }, PROGRESS_INTERVAL_MS);
+
+  const onOutput = (line: string) => {
+    tick++;
+    interval.refresh();
+    extra.sendNotification({
+      method: "notifications/progress" as const,
+      params: {
+        progressToken,
+        progress: tick,
+        message: line,
+      },
+    }).catch(() => {});
+  };
+
+  return { onOutput, stop: () => clearInterval(interval) };
+}
+
 function getStore(dir: string): OrchestratorStore {
   return new OrchestratorStore(getStorePath(dir));
 }
@@ -68,7 +110,7 @@ server.registerTool(
     },
   },
   async ({ dir, branch, base, worktreeDir }, extra) => {
-    const stopHeartbeat = startProgressHeartbeat(extra);
+    const notifier = createOutputNotifier(extra);
     try {
       const result = await sandboxUpCore({
         dir,
@@ -77,6 +119,7 @@ server.registerTool(
         worktreeDir,
         interactive: false,
         verbose: false,
+        onOutput: notifier.onOutput,
       });
 
       const lines = [
@@ -97,7 +140,7 @@ server.registerTool(
         isError: true,
       };
     } finally {
-      stopHeartbeat();
+      notifier.stop();
     }
   },
 );
@@ -114,9 +157,9 @@ server.registerTool(
     },
   },
   async ({ dir, branch, task, sessionId }, extra) => {
-    const stopHeartbeat = startProgressHeartbeat(extra);
+    const notifier = createOutputNotifier(extra);
     try {
-      const result = await sandboxExecCore({ dir, branch, task, sessionId, verbose: false });
+      const result = await sandboxExecCore({ dir, branch, task, sessionId, verbose: false, onOutput: notifier.onOutput });
 
       return {
         content: [{
@@ -130,7 +173,7 @@ server.registerTool(
         isError: true,
       };
     } finally {
-      stopHeartbeat();
+      notifier.stop();
     }
   },
 );

@@ -269,6 +269,7 @@ export async function containerExec(
   workspaceFolder: string,
   cmd: string[],
   remoteEnvs?: Record<string, string>,
+  onOutput?: (line: string) => void,
 ): Promise<number> {
   const bin = getDevcontainerBin();
   const args = [
@@ -287,8 +288,16 @@ export async function containerExec(
 
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
-      stdio: "inherit",
+      stdio: onOutput ? ["pipe", "pipe", "pipe"] : "inherit",
     });
+
+    if (onOutput && child.stdout && child.stderr) {
+      const stdoutInterface = readline.createInterface({ input: child.stdout });
+      const stderrInterface = readline.createInterface({ input: child.stderr });
+
+      stdoutInterface.on("line", (line) => onOutput(line));
+      stderrInterface.on("line", (line) => onOutput(line));
+    }
 
     child.on("error", (err) => {
       reject(new Error(`Failed to exec in container: ${err.message}`));

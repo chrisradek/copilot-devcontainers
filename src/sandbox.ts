@@ -36,6 +36,7 @@ export interface SandboxUpOptions {
   sessionId?: string;
   interactive: boolean;
   verbose?: boolean;
+  onOutput?: (line: string) => void;
 }
 
 export interface SandboxDownOptions {
@@ -184,7 +185,7 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
       sessionId,
       "--allow-all",
       "--no-ask-user",
-    ], remoteEnvs);
+    ], remoteEnvs, options.onOutput);
     addSessionEntry(worktreePath, {
       sessionId,
       createdAt: new Date().toISOString(),
@@ -205,6 +206,7 @@ export async function sandboxExecCore(options: {
   task: string;
   sessionId?: string;
   verbose?: boolean;
+  onOutput?: (line: string) => void;
 }): Promise<{ worktreePath: string; exitCode: number; sessionId: string }> {
   const gitRoot = getGitRoot(options.dir);
   const worktrees = await listWorktrees(gitRoot);
@@ -233,7 +235,7 @@ export async function sandboxExecCore(options: {
     "--no-ask-user",
   ];
 
-  const exitCode = await containerExec(target.path, copilotArgs, remoteEnvs);
+  const exitCode = await containerExec(target.path, copilotArgs, remoteEnvs, options.onOutput);
 
   if (!options.sessionId) {
     addSessionEntry(target.path, {
