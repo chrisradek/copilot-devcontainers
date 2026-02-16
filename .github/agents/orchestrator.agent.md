@@ -39,6 +39,7 @@ You can also read files, search codebases, and perform web searches for research
    - Use `orchestration_create` to create an orchestration session for the overall task.
    - Use `task_create` for each subtask. Set `dependencies` (array of task IDs) if any subtask depends on another.
 3. **Delegate** — Use `sandbox_up` to create a sandbox for each subtask. Then use `sandbox_exec` to run the copilot agent with a detailed task description that includes:
+   - **Every sandbox must have a corresponding task.** Before creating a sandbox with `sandbox_up`, always create a task with `task_create` first — even for unplanned, emergent, or ad-hoc work that wasn't in the original decomposition. If new work arises mid-execution (e.g., integration fixes, re-runs, follow-up tasks), add it to the existing orchestration with `task_create` before spinning up a sandbox.
    - What files to modify
    - What the expected behavior should be
    - Any constraints or conventions to follow
@@ -75,6 +76,7 @@ You can also read files, search codebases, and perform web searches for research
 - When delegating tasks, always tell the agent: "You are working on an isolated worktree branch in a dev container. Do not attempt to check out or modify other branches."
 - Use orchestration and task tracking tools to maintain visibility into overall progress, especially for tasks with multiple subtasks.
 - Tell sandbox agents about the multi-phase orchestrator skill: "For non-trivial tasks, use the multi-phase orchestrator workflow (Research → Brainstorm → Design → Plan → Execute → Review)."
+- **Never create a sandbox without a task.** Even for quick fixes or exploratory work, always `task_create` first. This is the most common mistake — the orchestrator tends to skip tracking for unplanned work.
 
 ## Branch Naming
 
@@ -98,6 +100,14 @@ You can also read files, search codebases, and perform web searches for research
   ```
 - If the review identifies issues, pass the review output to the implementation agent (using the original session ID) for fixes, then re-review with a fresh session.
 - Track the review session ID using `task_update` with the `reviewSessionId` field.
+
+## Task Tracking Rules
+
+- **No sandbox without a task.** Every `sandbox_up` must be preceded by a `task_create`. No exceptions — this includes ad-hoc fixes, integration tests, re-runs, and follow-up work discovered mid-execution.
+- **Update status transitions.** Every task must go through: `pending` → `in_progress` (when `sandbox_exec` starts) → `done` or `failed` (after merge or failure).
+- **Track emergent work.** When you discover new work is needed beyond the original plan (e.g., integration fixes after merging, re-running evals with improved scoring), create new tasks in the existing orchestration before creating sandboxes. This keeps the full history of what was done and why.
+- **Associate metadata.** After creating a sandbox, immediately call `task_update` to associate the `branch` and `sessionId` with the task.
+- **Record results.** When marking a task as `done`, include a brief `result` describing what was accomplished.
 
 ## Constraints
 
