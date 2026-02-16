@@ -15,7 +15,7 @@ interface McpConfig {
 const MCP_SERVER_ENTRY = {
   type: "stdio",
   command: "npx",
-  args: ["-y", "@cjradek/copilot-sandbox", "mcp"],
+  args: ["-y", "@cjradek/copilot-sandbox@latest", "--package", "@cjradek/copilot-sandbox@latest", "copilot-sandbox-mcp"],
   tools: ["*"],
 };
 
