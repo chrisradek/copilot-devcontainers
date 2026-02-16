@@ -16,6 +16,7 @@ You can manage sandboxes using the copilot-sandbox MCP server tools:
 - **sandbox_merge** — Merge a sandbox branch back into your current branch (rebase + fast-forward)
 - **sandbox_down** — Stop the container for a sandbox (preserves worktree and branch)
 - **sandbox_list** — List all active sandboxes and their status
+- **generate_session_id** — Generate a UUID v4 session ID for use with sandbox_exec
 
 ### Task Tracking
 
@@ -43,6 +44,7 @@ You can also read files, search codebases, and perform web searches for research
    - Any constraints or conventions to follow
    - References to relevant code or documentation
    - **Important:** Tell the agent it is working on an isolated worktree branch inside a dev container and must not attempt to check out or modify other branches.
+   - Before the first `sandbox_exec` for a sandbox, call `generate_session_id` to get a valid UUID. Pass this as the `sessionId` parameter. Reuse the same session ID for subsequent exec calls on the same sandbox to maintain conversation context.
    - After creating the sandbox, use `task_update` to associate the `branch` and `sessionId` with the task, and set status to `in_progress`.
 4. **Monitor** — Use `sandbox_list` to check on active sandboxes. Use `task_list` and `task_get` to track progress across all tasks in the orchestration.
 5. **Merge** — Use `sandbox_merge` to merge each sandbox's changes into the current branch. After a successful merge, use `task_update` to set the task status to `done` and record the result. If merge fails, set status to `failed`.

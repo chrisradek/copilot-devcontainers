@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   sandboxUpCore,
@@ -304,6 +305,21 @@ server.registerTool(
         isError: true,
       };
     }
+  },
+);
+
+server.registerTool(
+  "generate_session_id",
+  {
+    description: "Generate a new UUID v4 session ID for use with sandbox_exec. " +
+    "Call this before the first sandbox_exec for a sandbox to get a valid session ID " +
+    "that can be reused across multiple exec calls to maintain conversation context.",
+    inputSchema: {},
+  },
+  async () => {
+    return {
+      content: [{ type: "text" as const, text: randomUUID() }],
+    };
   },
 );
 
