@@ -31,11 +31,6 @@ describe("MCP Server", () => {
     expect(toolNames).toContain("task_update");
     expect(toolNames).toContain("task_list");
     expect(toolNames).toContain("task_get");
-    expect(toolNames).toContain("issue_create");
-    expect(toolNames).toContain("issue_list");
-    expect(toolNames).toContain("issue_get");
-    expect(toolNames).toContain("issue_update");
-    expect(toolNames).toContain("issue_import");
 
     await client.close();
     await server.close();

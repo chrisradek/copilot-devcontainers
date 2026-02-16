@@ -6,7 +6,8 @@
   "types": "dist/cli.d.ts",
   "bin": {
     "copilot-sandbox": "./dist/cli.js",
-    "copilot-sandbox-mcp": "./dist/mcp.js"
+    "copilot-sandbox-mcp": "./dist/mcp.js",
+    "issue-tracker-mcp": "./dist/issue-mcp.js"
   },
   "files": [
     "dist",
