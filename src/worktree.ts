@@ -195,29 +195,14 @@ export function generateBranchName(): string {
 }
 
 /**
- * Get the diff of changes in a worktree.
- * If no base is provided, uses merge-base with the current branch of the main repo.
+ * Get the diff of changes in a worktree against a base ref.
+ * Callers should provide a base branch. If omitted, defaults to HEAD (no diff).
  */
 export async function getWorktreeDiff(
   worktreePath: string,
   base?: string,
 ): Promise<DiffResult> {
-  let baseRef = base;
-
-  // If no base provided, auto-detect using merge-base
-  if (!baseRef) {
-    // Get the git root to find the parent branch
-    const gitRoot = getGitRoot(worktreePath);
-    const parentBranch = getCurrentBranch(gitRoot);
-
-    // Find merge-base between HEAD and parent branch
-    const mergeBase = await execGit(worktreePath, [
-      "merge-base",
-      "HEAD",
-      parentBranch,
-    ]);
-    baseRef = mergeBase.trim();
-  }
+  const baseRef = base ?? "HEAD";
 
   // Get diff --stat for summary
   const stats = await execGit(worktreePath, [

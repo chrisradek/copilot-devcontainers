@@ -383,7 +383,9 @@ export async function sandboxDiffCore(options: {
     throw new Error(`No worktree found for branch "${options.branch}".`);
   }
 
-  const diffResult = await getWorktreeDiff(target.path, options.base);
+  // If no base provided, use the main repo's current branch
+  const base = options.base ?? getCurrentBranch(gitRoot);
+  const diffResult = await getWorktreeDiff(target.path, base);
 
   return {
     branch: options.branch,

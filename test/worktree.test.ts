@@ -13,6 +13,7 @@ import {
   getCurrentBranch,
   generateBranchName,
   listLocalBranches,
+  getWorktreeDiff,
 } from "../src/worktree.js";
 
 describe("worktree", () => {
@@ -167,6 +168,35 @@ describe("worktree", () => {
 
       branches = await listLocalBranches(testRepoDir);
       expect(branches).not.toContain(branchName);
+    });
+  });
+
+  describe("getWorktreeDiff", () => {
+    it("should show changes made in a worktree", async () => {
+      const worktreePath = path.join(testRepoDir, "..", "diff-test-worktree");
+      const branchName = "feature-with-changes";
+
+      // Create worktree from main branch
+      await createWorktree(testRepoDir, worktreePath, branchName, "main");
+
+      // Make changes in the worktree
+      const newFile = path.join(worktreePath, "newfile.txt");
+      fs.writeFileSync(newFile, "New content\n");
+      execFileSync("git", ["add", "newfile.txt"], { cwd: worktreePath });
+      execFileSync("git", ["commit", "-m", "Add new file"], { cwd: worktreePath });
+
+      // Get diff from main branch
+      const diff = await getWorktreeDiff(worktreePath, "main");
+
+      // Verify the diff shows the new file
+      expect(diff.stats).toContain("newfile.txt");
+      expect(diff.diff).toContain("+New content");
+      expect(diff.files).toContain("newfile.txt");
+      expect(diff.files.length).toBeGreaterThan(0);
+
+      // Clean up
+      await removeWorktree(testRepoDir, worktreePath);
+      await deleteBranch(testRepoDir, branchName);
     });
   });
 });
