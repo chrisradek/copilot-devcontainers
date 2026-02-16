@@ -1,6 +1,6 @@
 {
   "name": "@cjradek/copilot-sandbox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A CLI tool for running coding agents inside isolated dev containers on git worktrees",
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
