@@ -54,10 +54,38 @@ function startProgressHeartbeat(extra: ToolExtra): () => void {
 function createOutputNotifier(extra: ToolExtra): {
   onOutput: (line: string) => void;
   stop: () => void;
+  getCapturedOutput: () => string[];
 } {
+  const MAX_CAPTURED_LINES = 50;
+  const capturedLines: string[] = [];
   const progressToken = extra._meta?.progressToken;
+
+  const onOutput = (line: string) => {
+    capturedLines.push(line);
+    if (capturedLines.length > MAX_CAPTURED_LINES) {
+      capturedLines.shift();
+    }
+    
+    if (progressToken != null) {
+      tick++;
+      interval.refresh();
+      extra.sendNotification({
+        method: "notifications/progress" as const,
+        params: {
+          progressToken,
+          progress: tick,
+          message: line,
+        },
+      }).catch(() => {});
+    }
+  };
+
   if (progressToken == null) {
-    return { onOutput: () => {}, stop: () => {} };
+    return {
+      onOutput,
+      stop: () => {},
+      getCapturedOutput: () => [...capturedLines],
+    };
   }
 
   let tick = 0;
@@ -73,20 +101,11 @@ function createOutputNotifier(extra: ToolExtra): {
     }).catch(() => {});
   }, PROGRESS_INTERVAL_MS);
 
-  const onOutput = (line: string) => {
-    tick++;
-    interval.refresh();
-    extra.sendNotification({
-      method: "notifications/progress" as const,
-      params: {
-        progressToken,
-        progress: tick,
-        message: line,
-      },
-    }).catch(() => {});
+  return {
+    onOutput,
+    stop: () => clearInterval(interval),
+    getCapturedOutput: () => [...capturedLines],
   };
-
-  return { onOutput, stop: () => clearInterval(interval) };
 }
 
 function getStore(dir: string): OrchestratorStore {
@@ -166,10 +185,15 @@ server.registerTool(
     try {
       const result = await sandboxExecCore({ dir, branch, task, sessionId, verbose: false, onOutput: notifier.onOutput });
 
+      const captured = notifier.getCapturedOutput();
+      const outputSection = captured.length > 0
+        ? `\n\n--- Agent Output (last ${captured.length} lines) ---\n${captured.join("\n")}`
+        : "";
+
       return {
         content: [{
           type: "text" as const,
-          text: `Copilot finished in sandbox "${branch}".\nWorktree: ${result.worktreePath}\nExit code: ${result.exitCode}\nSession ID: ${result.sessionId}`,
+          text: `Copilot finished in sandbox "${branch}".\nWorktree: ${result.worktreePath}\nExit code: ${result.exitCode}\nSession ID: ${result.sessionId}${outputSection}`,
         }],
       };
     } catch (err) {
