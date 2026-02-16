@@ -19,6 +19,7 @@ import {
   hasDevcontainerConfig,
   createDefaultDevcontainerConfig,
   ensureCopilotFeature,
+  ensureMultiPhaseSkill,
   containerUp,
   containerExec,
   containerExecInteractive,
@@ -145,6 +146,7 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
   }
 
   ensureCopilotFeature(worktreePath);
+  ensureMultiPhaseSkill(worktreePath);
 
   const { remoteEnvs } = prepareRemoteEnvs();
 

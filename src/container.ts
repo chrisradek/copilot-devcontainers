@@ -191,6 +191,75 @@ export function ensureCopilotFeature(workspaceFolder: string): void {
 }
 
 /**
+ * Add a pattern to a worktree's git exclude file to keep it untracked.
+ */
+function addToWorktreeExclude(workspaceFolder: string, pattern: string): void {
+  const dotGitPath = path.join(workspaceFolder, ".git");
+  let worktreeGitDir: string;
+  
+  try {
+    const stat = fs.statSync(dotGitPath);
+    if (stat.isDirectory()) {
+      // Regular repo, use .git/info/exclude
+      worktreeGitDir = dotGitPath;
+    } else {
+      // Worktree — .git is a file with "gitdir: <path>"
+      const content = fs.readFileSync(dotGitPath, "utf-8").trim();
+      const match = content.match(/^gitdir:\s*(.+)$/);
+      if (!match) return;
+      worktreeGitDir = path.resolve(workspaceFolder, match[1]);
+    }
+  } catch {
+    return;
+  }
+  
+  const infoDir = path.join(worktreeGitDir, "info");
+  const excludePath = path.join(infoDir, "exclude");
+  
+  // Check if pattern already exists
+  try {
+    const existing = fs.readFileSync(excludePath, "utf-8");
+    if (existing.includes(pattern)) return;
+  } catch {
+    // File doesn't exist yet, that's fine
+  }
+  
+  fs.mkdirSync(infoDir, { recursive: true });
+  const entry = `\n# copilot-sandbox: injected skill files\n${pattern}\n`;
+  fs.appendFileSync(excludePath, entry, "utf-8");
+}
+
+/**
+ * Ensure the multi-phase orchestrator skill is available in the worktree.
+ * If the repo doesn't have its own skill, inject it from this package.
+ */
+export function ensureMultiPhaseSkill(workspaceFolder: string): void {
+  const skillDir = path.join(workspaceFolder, ".github", "skills", "multi-phase-orchestrator");
+  const skillPath = path.join(skillDir, "SKILL.md");
+  
+  // Already exists — repo has its own skill
+  if (fs.existsSync(skillPath)) return;
+  
+  // Read skill files from this package's own .github/skills/
+  const srcSkillDir = path.resolve(import.meta.dirname, "../.github/skills/multi-phase-orchestrator");
+  const srcSkillMd = path.join(srcSkillDir, "SKILL.md");
+  const srcTaskFormat = path.join(srcSkillDir, "references", "task-format.md");
+  
+  // If source files don't exist (shouldn't happen), bail
+  if (!fs.existsSync(srcSkillMd)) return;
+  
+  // Write skill files
+  fs.mkdirSync(path.join(skillDir, "references"), { recursive: true });
+  fs.copyFileSync(srcSkillMd, skillPath);
+  if (fs.existsSync(srcTaskFormat)) {
+    fs.copyFileSync(srcTaskFormat, path.join(skillDir, "references", "task-format.md"));
+  }
+  
+  // Add to worktree-specific git exclude so they're not tracked
+  addToWorktreeExclude(workspaceFolder, ".github/skills/multi-phase-orchestrator/");
+}
+
+/**
  * Resolve the main .git directory for a worktree.
  * Returns undefined if not a worktree (i.e. regular repo with .git directory).
  */
