@@ -9,6 +9,12 @@ export interface WorktreeInfo {
   isBare: boolean;
 }
 
+export interface DiffResult {
+  files: string[];
+  stats: string;
+  diff: string;
+}
+
 /**
  * Find the git root directory for a given path.
  */
@@ -186,6 +192,59 @@ export function generateBranchName(): string {
     .replace(/[:.]/g, "-")
     .slice(0, 19);
   return `sandbox/${timestamp}`;
+}
+
+/**
+ * Get the diff of changes in a worktree.
+ * If no base is provided, uses merge-base with the current branch of the main repo.
+ */
+export async function getWorktreeDiff(
+  worktreePath: string,
+  base?: string,
+): Promise<DiffResult> {
+  let baseRef = base;
+
+  // If no base provided, auto-detect using merge-base
+  if (!baseRef) {
+    // Get the git root to find the parent branch
+    const gitRoot = getGitRoot(worktreePath);
+    const parentBranch = getCurrentBranch(gitRoot);
+
+    // Find merge-base between HEAD and parent branch
+    const mergeBase = await execGit(worktreePath, [
+      "merge-base",
+      "HEAD",
+      parentBranch,
+    ]);
+    baseRef = mergeBase.trim();
+  }
+
+  // Get diff --stat for summary
+  const stats = await execGit(worktreePath, [
+    "diff",
+    "--stat",
+    `${baseRef}..HEAD`,
+  ]);
+
+  // Get full diff
+  const diff = await execGit(worktreePath, [
+    "diff",
+    `${baseRef}..HEAD`,
+  ]);
+
+  // Get list of changed files
+  const filesOutput = await execGit(worktreePath, [
+    "diff",
+    "--name-only",
+    `${baseRef}..HEAD`,
+  ]);
+  const files = filesOutput.trim().split("\n").filter(Boolean);
+
+  return {
+    files,
+    stats: stats.trim(),
+    diff: diff.trim(),
+  };
 }
 
 function execGit(cwd: string, args: string[]): Promise<string> {

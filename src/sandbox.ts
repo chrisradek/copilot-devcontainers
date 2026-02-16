@@ -12,8 +12,10 @@ import {
   getCurrentBranch,
   rebaseWorktree,
   fastForwardMerge,
+  getWorktreeDiff,
   type WorktreeInfo,
   type RebaseResult,
+  type DiffResult,
 } from "./worktree.js";
 import {
   hasDevcontainerConfig,
@@ -68,6 +70,13 @@ export interface SandboxUpResult {
 
 export interface SandboxListResult {
   sandboxes: SandboxInfo[];
+}
+
+export interface SandboxDiffResult {
+  branch: string;
+  files: string[];
+  stats: string;
+  diff: string;
 }
 
 const SANDBOX_BRANCH_PREFIX = "sandbox/";
@@ -355,6 +364,30 @@ export async function sandboxListCore(dir: string): Promise<SandboxListResult> {
     }));
 
   return { sandboxes };
+}
+
+/**
+ * Core "diff" logic: show changes in a sandbox worktree.
+ */
+export async function sandboxDiffCore(options: {
+  dir: string;
+  branch: string;
+  base?: string;
+}): Promise<SandboxDiffResult> {
+  const gitRoot = getGitRoot(options.dir);
+  const worktrees = await listWorktrees(gitRoot);
+
+  const target = worktrees.find((wt) => wt.branch === options.branch);
+  if (!target) {
+    throw new Error(`No worktree found for branch "${options.branch}".`);
+  }
+
+  const diffResult = await getWorktreeDiff(target.path, options.base);
+
+  return {
+    branch: options.branch,
+    ...diffResult,
+  };
 }
 
 // ── CLI wrappers (logging + process.exit) ──
