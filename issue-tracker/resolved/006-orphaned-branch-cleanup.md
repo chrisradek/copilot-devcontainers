@@ -23,3 +23,12 @@ None — the branches are still sitting there. Manual `git branch -D` cleanup wo
 1. **Add `sandbox_cleanup`** — a tool that lists and optionally deletes branches that have no associated worktree and are not the current branch.
 2. **Clean up branches on conflict** — when `sandbox_merge` fails with conflicts, either keep the worktree alive (preferred, see #001) or clean up both the worktree AND the branch.
 3. **Add branch cleanup to `sandbox_down`** — allow `sandbox_down --branch <name> --force` to delete a branch even without an active worktree.
+
+## Resolution
+
+**Status:** Resolved
+**Date:** 2026-02-16T21:13:46.828Z
+
+Added sandbox_cleanup MCP tool that finds and deletes orphaned sandbox/ branches with no associated worktree. Supports dryRun mode.
+
+**Tasks:** task-sandbox-cleanup

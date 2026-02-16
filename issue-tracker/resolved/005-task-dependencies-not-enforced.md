@@ -28,3 +28,12 @@ Manually ensured tasks 1-3 were merged before creating the sandbox for task 4. T
 1. **Warn on dependency violations** — if `sandbox_up` or `sandbox_exec` is called for a task with pending dependencies, return a warning (not a hard block, since the orchestrator might have good reasons).
 2. **Add a `ready_tasks` query** — `task_list` with a filter for tasks whose dependencies are all `done`, making it easy to find what to work on next.
 3. **Block `sandbox_merge` for unmet dependencies** — this is the most important enforcement point. Merging a task before its dependencies are merged could cause real problems.
+
+## Resolution
+
+**Status:** Resolved
+**Date:** 2026-02-16T21:13:46.822Z
+
+Added getUnmetDependencies and findTaskByBranch to OrchestratorStore. sandbox_merge warns about unmet dependencies. task_list supports a ready filter for tasks with all deps done.
+
+**Tasks:** task-dependency-enforcement

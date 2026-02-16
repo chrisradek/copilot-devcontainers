@@ -32,3 +32,10 @@ This is clunky and error-prone — I had to do it twice (once for `add-human-eva
 2. **Add `sandbox_reattach`** — allow re-creating a worktree for an existing branch that lost its worktree.
 3. **Add `sandbox_resolve_conflicts`** — a higher-level tool that takes a branch with an in-progress rebase, spins up a sandbox, and lets an agent resolve it.
 4. **Clean up orphaned branches** — after the workaround, stale branches like `add-human-eval` and `add-grading-notes` remain. See issue #006.
+
+## Resolution
+
+**Status:** Resolved
+**Date:** 2026-02-16T20:55:50.134Z
+
+Already fixed in current code. sandboxMergeCore returns { success: false, conflictFiles } on conflict without removing the worktree or branch, allowing the agent to resolve conflicts and retry.

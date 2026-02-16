@@ -40,3 +40,12 @@ Relied entirely on the code review step (separate `sandbox_exec` with a new sess
 2. **Return a structured summary** — files changed, tests run (pass/fail), commits made, any errors encountered.
 3. **Add `sandbox_log`** — a tool to retrieve the full conversation log from a completed session.
 4. **Add `sandbox_status`** — show what files were modified, what commits exist, test results if available.
+
+## Resolution
+
+**Status:** Resolved
+**Date:** 2026-02-16T21:13:46.819Z
+
+sandbox_exec now captures and returns the last 50 lines of agent output in its response, using a ring buffer in createOutputNotifier.
+
+**Tasks:** task-return-output

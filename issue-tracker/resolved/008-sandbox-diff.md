@@ -35,3 +35,12 @@ Returns:
 - Optionally the full diff content (with a size limit)
 
 This would be a lightweight, read-only operation that doesn't require spinning up an agent.
+
+## Resolution
+
+**Status:** Resolved
+**Date:** 2026-02-16T21:13:46.830Z
+
+Added sandbox_diff MCP tool that shows changes in a sandbox branch without spinning up an agent. Returns file list, stats, and truncated diff content.
+
+**Tasks:** task-sandbox-diff
