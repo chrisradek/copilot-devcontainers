@@ -376,6 +376,13 @@ server.registerTool(
         ? result.diff.slice(0, maxDiffLength) + "\n\n... (truncated)"
         : result.diff;
 
+      // Handle empty diff case
+      if (result.files.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: `Diff for sandbox "${result.branch}":\n\nNo changes.` }],
+        };
+      }
+
       const lines = [
         `Diff for sandbox "${result.branch}":`,
         ``,
