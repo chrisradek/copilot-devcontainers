@@ -254,13 +254,29 @@ server.registerTool(
   async ({ dir, branch }, extra) => {
     const stopHeartbeat = startProgressHeartbeat(extra);
     try {
+      // Check for unmet dependencies
+      let dependencyWarning = "";
+      try {
+        const store = getStore(dir);
+        const task = store.findTaskByBranch(branch);
+        if (task) {
+          const unmet = store.getUnmetDependencies(task.id);
+          if (unmet.length > 0) {
+            const unmetList = unmet.map((t) => `${t.id} (${t.status})`).join(", ");
+            dependencyWarning = `\n⚠️ Warning: Task "${task.title}" has unmet dependencies: ${unmetList}\n`;
+          }
+        }
+      } catch {
+        // Non-critical — don't fail the merge for dependency check errors
+      }
+
       const result = await sandboxMergeCore({ dir, branch });
 
       if (result.success) {
         return {
           content: [{
             type: "text" as const,
-            text: `Sandbox "${branch}" has been successfully merged and cleaned up.`,
+            text: `${dependencyWarning}Sandbox "${branch}" has been successfully merged and cleaned up.`,
           }],
         };
       }
@@ -551,12 +567,22 @@ server.registerTool(
       dir: z.string().describe("Path to the git repository"),
       orchestrationId: z.string().optional().describe("Filter by orchestration ID"),
       status: z.string().optional().describe("Filter by task status"),
+      ready: z.boolean().optional().describe("If true, only return tasks whose dependencies are all done and own status is pending"),
     },
   },
-  async ({ dir, orchestrationId, status }) => {
+  async ({ dir, orchestrationId, status, ready }) => {
     try {
       const store = getStore(dir);
-      const tasks = store.listTasks({ orchestrationId, status });
+      let tasks = store.listTasks({ orchestrationId, status });
+
+      if (ready) {
+        tasks = tasks.filter((t) => {
+          if (t.status !== "pending") return false;
+          if (t.dependencies.length === 0) return true;
+          const unmet = store.getUnmetDependencies(t.id);
+          return unmet.length === 0;
+        });
+      }
 
       if (tasks.length === 0) {
         return {

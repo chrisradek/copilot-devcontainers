@@ -146,6 +146,20 @@ export class OrchestratorStore {
     this.write(data);
     return task;
   }
+
+  getUnmetDependencies(taskId: string): OrchestratorTask[] {
+    const data = this.read();
+    const task = data.tasks[taskId];
+    if (!task) return [];
+    return task.dependencies
+      .map((depId) => data.tasks[depId])
+      .filter((dep): dep is OrchestratorTask => dep !== undefined && dep.status !== "done");
+  }
+
+  findTaskByBranch(branch: string): OrchestratorTask | undefined {
+    const data = this.read();
+    return Object.values(data.tasks).find((t) => t.branch === branch);
+  }
 }
 
 export function getStorePath(dir: string): string {
