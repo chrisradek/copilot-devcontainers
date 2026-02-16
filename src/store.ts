@@ -150,7 +150,7 @@ export class OrchestratorStore {
 
 export function getStorePath(dir: string): string {
   const gitRoot = getGitRoot(dir);
-  return path.join(gitRoot, ".copilot-sandbox-tasks.json");
+  return path.join(gitRoot, ".orchestrator", "tasks.json");
 }
 
 export interface Issue {
@@ -285,5 +285,5 @@ export class IssueStore {
 
 export function getIssueStorePath(dir: string): string {
   const gitRoot = getGitRoot(dir);
-  return path.join(gitRoot, ".copilot-sandbox-issues.json");
+  return path.join(gitRoot, ".orchestrator", "issues.json");
 }
