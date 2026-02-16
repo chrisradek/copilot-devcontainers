@@ -13,6 +13,7 @@ import {
   sandboxExecCore,
   sandboxMergeCore,
   sandboxDiffCore,
+  sandboxCleanupCore,
 } from "./sandbox.js";
 import { OrchestratorStore, getStorePath, IssueStore, getIssueStorePath } from "./store.js";
 
@@ -1091,6 +1092,56 @@ server.registerTool(
         `Diff:`,
         truncatedDiff,
       ];
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  "sandbox_cleanup",
+  {
+    description: "Clean up orphaned sandbox branches that have no associated worktree. " +
+    "Only removes branches with the sandbox/ prefix.",
+    inputSchema: {
+      dir: z.string().describe("Path to the git repository"),
+      dryRun: z.boolean().optional().default(false).describe("If true, only list orphaned branches without deleting them"),
+    },
+  },
+  async ({ dir, dryRun }) => {
+    try {
+      const result = await sandboxCleanupCore({ dir, dryRun });
+
+      if (result.orphanedBranches.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No orphaned sandbox branches found." }],
+        };
+      }
+
+      const lines: string[] = [];
+      if (dryRun) {
+        lines.push(`Found ${result.orphanedBranches.length} orphaned sandbox branch(es):`);
+        for (const b of result.orphanedBranches) {
+          lines.push(`  ${b}`);
+        }
+        lines.push("", "Run without dryRun to delete them.");
+      } else {
+        lines.push(`Cleaned up ${result.deletedBranches.length} orphaned sandbox branch(es):`);
+        for (const b of result.deletedBranches) {
+          lines.push(`  ${b} (deleted)`);
+        }
+        const failed = result.orphanedBranches.length - result.deletedBranches.length;
+        if (failed > 0) {
+          lines.push(`  ${failed} branch(es) could not be deleted.`);
+        }
+      }
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],

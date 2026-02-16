@@ -13,6 +13,7 @@ import {
   rebaseWorktree,
   fastForwardMerge,
   getWorktreeDiff,
+  listLocalBranches,
   type WorktreeInfo,
   type RebaseResult,
   type DiffResult,
@@ -388,6 +389,44 @@ export async function sandboxDiffCore(options: {
     branch: options.branch,
     ...diffResult,
   };
+}
+
+export interface SandboxCleanupResult {
+  orphanedBranches: string[];
+  deletedBranches: string[];
+}
+
+/**
+ * Core "cleanup" logic: find and optionally delete orphaned sandbox branches.
+ */
+export async function sandboxCleanupCore(options: {
+  dir: string;
+  dryRun?: boolean;
+}): Promise<SandboxCleanupResult> {
+  const gitRoot = getGitRoot(options.dir);
+  const worktrees = await listWorktrees(gitRoot);
+  const currentBranch = getCurrentBranch(gitRoot);
+
+  const worktreeBranches = new Set(worktrees.map((wt) => wt.branch));
+  const allBranches = await listLocalBranches(gitRoot);
+
+  const orphanedBranches = allBranches.filter(
+    (b) => b.startsWith("sandbox/") && !worktreeBranches.has(b) && b !== currentBranch,
+  );
+
+  const deletedBranches: string[] = [];
+  if (!options.dryRun) {
+    for (const branch of orphanedBranches) {
+      try {
+        await deleteBranch(gitRoot, branch);
+        deletedBranches.push(branch);
+      } catch {
+        // Skip branches that can't be deleted
+      }
+    }
+  }
+
+  return { orphanedBranches, deletedBranches };
 }
 
 // ── CLI wrappers (logging + process.exit) ──

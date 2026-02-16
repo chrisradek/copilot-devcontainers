@@ -247,6 +247,18 @@ export async function getWorktreeDiff(
   };
 }
 
+/**
+ * List all local branch names.
+ */
+export async function listLocalBranches(repoDir: string): Promise<string[]> {
+  const output = await execGit(repoDir, [
+    "branch",
+    "--list",
+    "--format=%(refname:short)",
+  ]);
+  return output.trim().split("\n").filter(Boolean);
+}
+
 function execGit(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("git", ["-C", cwd, ...args], { encoding: "utf-8" }, (err, stdout, stderr) => {
