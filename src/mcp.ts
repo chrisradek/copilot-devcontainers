@@ -118,9 +118,10 @@ function getIssueStore(dir: string): IssueStore {
   return new IssueStore(getIssueStorePath(dir));
 }
 
-const server = new McpServer(
-  { name: "copilot-sandbox", version: "0.1.0" },
-);
+export function createMcpServer(): McpServer {
+  const server = new McpServer(
+    { name: "copilot-sandbox", version: "0.1.0" },
+  );
 
 server.registerTool(
   "sandbox_up",
@@ -1110,7 +1111,11 @@ server.registerTool(
   },
 );
 
+  return server;
+}
+
 async function main(): Promise<void> {
+  const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
