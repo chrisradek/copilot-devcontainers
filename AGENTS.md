@@ -9,8 +9,8 @@
 - **Language:** TypeScript (strict mode)
 - **Runtime:** Node.js 18+, ESM (`"type": "module"` in package.json)
 - **Module resolution:** Node16 (imports require `.js` extensions)
-- **Key dependency:** `@devcontainers/cli` — for managing dev container lifecycle
-- **No test framework yet** — validate changes by building (`npm run build`)
+- **Key dependencies:** `@devcontainers/cli` (dev container lifecycle), `@modelcontextprotocol/sdk` (MCP server implementation), `zod` (schema validation)
+- **Test framework:** vitest (`npm test`, `npm run test:watch`)
 
 ## Build & Run
 
@@ -18,23 +18,37 @@
 npm install
 npm run build          # tsc → dist/
 npm run dev            # tsc --watch
+npm test               # vitest run
+npm run test:watch     # vitest (watch mode)
 
 # Run the CLI
 node dist/cli.js up --dir /path/to/project --task "description"
 node dist/cli.js --help
 ```
 
-There are no tests or linters configured yet. **Always run `npm run build` to verify changes compile.**
+There are no linters configured yet. **Always run `npm run build` to verify changes compile.** Also run `npm test` to verify tests pass.
 
 ## Architecture
 
 ```
 src/
 ├── cli.ts          # CLI entry point, arg parsing, command dispatch
-├── sandbox.ts      # High-level sandbox operations (up, down, exec, list)
 ├── container.ts    # Dev container lifecycle (up, exec, down via @devcontainers/cli)
-└── worktree.ts     # Git worktree management (create, remove, list)
+├── init.ts         # Project/user setup (copilot-sandbox init)
+├── issue-mcp.ts    # MCP server for issue tracking tools
+├── issue-store.ts  # Issue persistence (JSON file store)
+├── mcp.ts          # MCP server for sandbox management tools
+├── sandbox.ts      # High-level sandbox operations (up, down, exec, merge, list, diff)
+├── store.ts        # Orchestration and task persistence (JSON file store)
+└── worktree.ts     # Git worktree management (create, remove, list, merge)
 ```
+
+### CLI Binaries
+
+The project exposes 3 CLI binaries:
+- `copilot-sandbox` — Main CLI for managing sandboxes
+- `copilot-sandbox-mcp` — MCP server exposing sandbox tools
+- `issue-tracker-mcp` — MCP server exposing issue tracking tools
 
 ### Key Patterns
 
