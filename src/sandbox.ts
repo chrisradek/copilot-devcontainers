@@ -190,8 +190,7 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
       "copilot",
       "-p",
       options.task,
-      "--resume",
-      sessionId,
+      `--resume=${sessionId}`,
       "--allow-all",
       "--no-ask-user",
     ], remoteEnvs, options.onOutput);
@@ -238,8 +237,7 @@ export async function sandboxExecCore(options: {
     "copilot",
     "-p",
     options.task,
-    "--resume",
-    sessionId,
+    `--resume=${sessionId}`,
     "--allow-all",
     "--no-ask-user",
   ];
