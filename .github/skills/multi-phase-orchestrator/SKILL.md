@@ -135,6 +135,8 @@ See [the task format reference](references/task-format.md) for the exact structu
 > 💡 The design spec is your source of truth. Follow it precisely. If you discover the
 > design is wrong or incomplete, note it but implement what you can.
 
+**In sandbox environments:** Always commit your changes and ensure `npm run build` (or the project's equivalent build command) passes before signaling completion. The orchestrator will run a separate review session after execution completes.
+
 ### Phase 6: Review
 
 **Role:** Senior code reviewer.
@@ -161,6 +163,8 @@ See [the task format reference](references/task-format.md) for the exact structu
 - Suggestions for improvement
 
 If you find blocking issues, fix them immediately after the review.
+
+**In sandbox environments:** The review should be performed by a **separate session** (different session ID) to ensure the reviewer approaches the code without the implementation context bias. The reviewer should only see the git diff and the task description, not the full implementation conversation.
 
 ## Phase Handoff Format
 
@@ -194,3 +198,26 @@ depends on the quality of the previous handoff.
 - **User says "skip to execution"** → Go straight to Phase 5 but still do Phase 6 (Review)
 
 Always perform the **Review** phase. It catches mistakes.
+
+## Running Inside a Sandbox
+
+When this skill is used by a Copilot agent running inside an isolated sandbox (dev container), the workflow can be further optimized through **subagent delegation**. Each phase can be delegated to a separate subagent for better isolation and focused context.
+
+The orchestrator running outside the sandbox may execute separate `sandbox_exec` calls with different session IDs for different phases. This is particularly valuable for the **Review phase**, which should use a **fresh session ID** so the reviewer has no prior context bias from the implementation work.
+
+**Key principles for sandbox orchestration:**
+
+1. **Phase isolation:** Each phase (Research, Brainstorm, Design, Plan, Execute, Review) can run in its own session with minimal handoff context. This keeps each agent focused and prevents context pollution.
+
+2. **Fresh reviewer context:** The Review phase should **always** use a separate session ID from the Execute phase. The reviewer should only receive:
+   - The original task description
+   - The git diff of changes
+   - The design specification (if applicable)
+   
+   The reviewer should NOT see the full implementation conversation, debugging steps, or intermediate attempts.
+
+3. **Mandatory review:** The Review phase is **mandatory** and cannot be skipped, even if the user says "just implement it." The review serves as a critical quality gate, especially in automated or orchestrated workflows where human oversight may be limited.
+
+4. **Build verification:** Before the Review phase begins, the Execute session must verify that the project builds successfully (`npm run build`, `cargo build`, `mvn compile`, etc.). This ensures the reviewer is evaluating working code.
+
+By delegating phases to separate sessions, the orchestrator achieves better separation of concerns and more objective code review.
