@@ -790,6 +790,53 @@ server.registerTool(
 
       const issue = store.updateIssue(id, updates);
 
+      // If status changed to "resolved" and we have a source file, update and move it
+      if (issue.status === "resolved" && issue.sourceFile) {
+        try {
+          const fs = await import("node:fs");
+          const path = await import("node:path");
+
+          if (fs.existsSync(issue.sourceFile)) {
+            // Read the current content
+            let content = fs.readFileSync(issue.sourceFile, "utf-8");
+
+            // Append ## Resolution section
+            const resolutionLines = [
+              "",
+              "## Resolution",
+              "",
+              `**Status:** Resolved`,
+              `**Date:** ${issue.updatedAt}`,
+            ];
+            if (issue.resolution) {
+              resolutionLines.push("", issue.resolution);
+            }
+            if (issue.linkedCommits.length > 0) {
+              resolutionLines.push("", `**Commits:** ${issue.linkedCommits.join(", ")}`);
+            }
+            if (issue.linkedTasks.length > 0) {
+              resolutionLines.push("", `**Tasks:** ${issue.linkedTasks.join(", ")}`);
+            }
+            resolutionLines.push("");
+
+            content = content.trimEnd() + "\n" + resolutionLines.join("\n");
+            fs.writeFileSync(issue.sourceFile, content, "utf-8");
+
+            // Move to resolved/ subdirectory
+            const dir = path.dirname(issue.sourceFile);
+            const resolvedDir = path.join(dir, "resolved");
+            fs.mkdirSync(resolvedDir, { recursive: true });
+            const destPath = path.join(resolvedDir, path.basename(issue.sourceFile));
+            fs.renameSync(issue.sourceFile, destPath);
+
+            // Update the sourceFile in the store to point to new location
+            store.updateIssue(id, { sourceFile: destPath });
+          }
+        } catch {
+          // File operations are best-effort — don't fail the status update
+        }
+      }
+
       const lines = [
         `Issue updated successfully.`,
         `ID: ${issue.id}`,
@@ -881,6 +928,7 @@ server.registerTool(
           description: content,
           priority,
           labels,
+          sourceFile: filePath,
         });
 
         imported++;

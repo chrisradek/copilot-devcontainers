@@ -163,6 +163,7 @@ export interface Issue {
   linkedCommits: string[];
   linkedTasks: string[];
   resolution?: string;
+  sourceFile?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -195,6 +196,7 @@ export class IssueStore {
     description: string;
     priority?: "high" | "medium" | "low";
     labels?: string[];
+    sourceFile?: string;
   }): Issue {
     const data = this.read();
     const now = new Date().toISOString();
@@ -207,6 +209,7 @@ export class IssueStore {
       labels: opts.labels ?? [],
       linkedCommits: [],
       linkedTasks: [],
+      sourceFile: opts.sourceFile,
       createdAt: now,
       updatedAt: now,
     };
@@ -258,6 +261,7 @@ export class IssueStore {
       resolution?: string;
       linkedCommits?: string[];
       linkedTasks?: string[];
+      sourceFile?: string;
     },
   ): Issue {
     const data = this.read();
@@ -276,6 +280,7 @@ export class IssueStore {
     if (updates.linkedTasks !== undefined) {
       issue.linkedTasks = [...issue.linkedTasks, ...updates.linkedTasks];
     }
+    if (updates.sourceFile !== undefined) issue.sourceFile = updates.sourceFile;
 
     issue.updatedAt = new Date().toISOString();
     this.write(data);
