@@ -1061,51 +1061,6 @@ server.registerTool(
 );
 
 server.registerTool(
-  "sandbox_diff",
-  {
-    description: "Show the diff of changes in a sandbox branch without starting an agent. " +
-    "Returns file list, stats, and diff content.",
-    inputSchema: {
-      dir: z.string().describe("Path to the git repository"),
-      branch: z.string().describe("Branch name of the sandbox"),
-      base: z.string().optional().describe("Base ref to diff against (default: merge-base with current branch)"),
-    },
-  },
-  async ({ dir, branch, base }) => {
-    try {
-      const result = await sandboxDiffCore({ dir, branch, base });
-
-      const MAX_DIFF_LENGTH = 10000;
-      const truncatedDiff = result.diff.length > MAX_DIFF_LENGTH
-        ? result.diff.slice(0, MAX_DIFF_LENGTH) + "\n\n... (truncated, " + result.diff.length + " total chars)"
-        : result.diff;
-
-      const lines = [
-        `Diff for sandbox "${result.branch}":`,
-        ``,
-        `Files changed (${result.files.length}):`,
-        ...result.files.map((f) => `  ${f}`),
-        ``,
-        `Stats:`,
-        result.stats,
-        ``,
-        `Diff:`,
-        truncatedDiff,
-      ];
-
-      return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
-      };
-    } catch (err) {
-      return {
-        content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-        isError: true,
-      };
-    }
-  },
-);
-
-server.registerTool(
   "sandbox_cleanup",
   {
     description: "Clean up orphaned sandbox branches that have no associated worktree. " +
