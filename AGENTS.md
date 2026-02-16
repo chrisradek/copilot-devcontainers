@@ -69,3 +69,24 @@ The project exposes 3 CLI binaries:
 - **devcontainer binary resolution:** `getDevcontainerBin()` checks for a local `node_modules/.bin/devcontainer` first, then falls back to global. The local path is relative to the compiled output (`dist/`), not the source.
 - **Worktree `.git` file:** Worktrees use a `.git` file (not directory) that points to the main repo. The `resolveWorktreeMainGitDir()` function parses this to find the main `.git` directory for bind-mounting.
 - **`--mount-workspace-git-root false`:** This flag is critical — without it, the devcontainer CLI mounts the git root as the workspace, which would be the main repo instead of the worktree.
+
+## Issue Tracking
+
+This project uses a local issue tracking system for managing its own backlog. Issues are stored in `.orchestrator/issues.json` and can be bootstrapped from markdown files in the `issue-tracker/` directory.
+
+### Issue Files
+
+Issue markdown files live in `issue-tracker/` and follow the naming pattern `NNN-slug.md` (e.g., `003-session-id-batching.md`). Resolved issues are moved to `issue-tracker/resolved/`.
+
+### MCP Tools
+
+The `issue-tracker-mcp` binary exposes these tools:
+- `issue_create` — Create a new issue with title, description, priority, and labels
+- `issue_list` — List issues filtered by status, priority, or label (sorted by priority then date)
+- `issue_get` — Get full details of an issue including linked commits and tasks
+- `issue_update` — Update status, priority, labels, resolution, and link commits/tasks
+- `issue_import` — Import issues from markdown files in `issue-tracker/`
+
+### Issue Lifecycle
+
+Issues have four statuses: `open` → `in_progress` → `resolved` → `closed`. When working on issues, link them to orchestration tasks and merge commits for traceability.
