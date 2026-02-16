@@ -42,6 +42,7 @@ Options for 'list':
 Options for 'init':
   --scope <repo|user>    Where to install (default: repo)
   --dir <path>           Target directory (default: cwd, used with --scope repo)
+  --force                Overwrite existing files (useful for upgrading)
 
 Examples:
   copilot-sandbox up --task "Fix the login bug"
@@ -90,6 +91,7 @@ interface InitArgs {
   command: "init";
   scope: "repo" | "user";
   dir: string;
+  force: boolean;
 }
 
 type ParsedArgs = UpArgs | DownArgs | ExecArgs | ListArgs | InitArgs | { command: "help" };
@@ -114,6 +116,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       boolFlags.add("interactive");
     } else if (flag === "--verbose") {
       boolFlags.add("verbose");
+    } else if (flag === "--force") {
+      boolFlags.add("force");
     } else if (flag.startsWith("--") && i + 1 < flags.length) {
       flagMap.set(flag.slice(2), flags[++i]);
     } else if (flag === "-h" || flag === "--help") {
@@ -180,6 +184,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         command: "init",
         scope,
         dir: path.resolve(dir),
+        force: boolFlags.has("force"),
       };
     }
     default:
@@ -235,6 +240,7 @@ async function main(): Promise<void> {
       initSandbox({
         scope: parsed.scope,
         dir: parsed.dir,
+        force: parsed.force,
       });
       break;
   }

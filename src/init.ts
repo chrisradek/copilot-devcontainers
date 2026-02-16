@@ -6,6 +6,7 @@ import * as url from "node:url";
 export interface InitOptions {
   scope: "repo" | "user";
   dir: string;
+  force?: boolean;
 }
 
 interface McpConfig {
@@ -48,48 +49,63 @@ function resolvePaths(options: InitOptions): { mcpConfigPath: string; agentPath:
   };
 }
 
-function writeMcpConfig(mcpConfigPath: string): void {
+function writeMcpConfig(mcpConfigPath: string, force?: boolean): void {
   fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
 
   let config: McpConfig = {};
+  let existed = false;
 
   if (fs.existsSync(mcpConfigPath)) {
     const existing = fs.readFileSync(mcpConfigPath, "utf-8");
     config = JSON.parse(existing) as McpConfig;
 
-    if (config.mcpServers?.["copilot-sandbox"]) {
+    if (config.mcpServers?.["copilot-sandbox"] && !force) {
       log(`  MCP server already configured in ${mcpConfigPath} — skipping`);
       return;
     }
+
+    existed = !!config.mcpServers?.["copilot-sandbox"];
   }
 
   config.mcpServers = config.mcpServers ?? {};
   config.mcpServers["copilot-sandbox"] = MCP_SERVER_ENTRY;
 
   fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2) + "\n");
-  log(`  ✓ MCP config: ${mcpConfigPath}`);
+  
+  if (force && existed) {
+    log(`  ✓ MCP config updated: ${mcpConfigPath}`);
+  } else {
+    log(`  ✓ MCP config: ${mcpConfigPath}`);
+  }
 }
 
-function writeAgent(agentPath: string): void {
+function writeAgent(agentPath: string, force?: boolean): void {
   fs.mkdirSync(path.dirname(agentPath), { recursive: true });
 
-  if (fs.existsSync(agentPath)) {
+  const existed = fs.existsSync(agentPath);
+
+  if (existed && !force) {
     log(`  Agent already exists at ${agentPath} — skipping`);
     return;
   }
 
   fs.writeFileSync(agentPath, readOrchestratorAgent());
-  log(`  ✓ Agent: ${agentPath}`);
+  
+  if (force && existed) {
+    log(`  ✓ Agent updated: ${agentPath}`);
+  } else {
+    log(`  ✓ Agent: ${agentPath}`);
+  }
 }
 
 export function initSandbox(options: InitOptions): void {
   const scopeLabel = options.scope === "user" ? "user (~/.copilot)" : `repo (${path.resolve(options.dir)})`;
-  log(`Initializing copilot-sandbox for ${scopeLabel}...\n`);
+  log(`Initializing copilot-sandbox for ${scopeLabel}...${options.force ? " (force)" : ""}\n`);
 
   const { mcpConfigPath, agentPath } = resolvePaths(options);
 
-  writeMcpConfig(mcpConfigPath);
-  writeAgent(agentPath);
+  writeMcpConfig(mcpConfigPath, options.force);
+  writeAgent(agentPath, options.force);
 
   log(`\nDone! The orchestrator agent is now available via @orchestrator.`);
 }
