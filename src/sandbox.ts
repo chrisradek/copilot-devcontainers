@@ -17,6 +17,7 @@ import {
 } from "./worktree.js";
 import {
   hasDevcontainerConfig,
+  createDefaultDevcontainerConfig,
   ensureCopilotFeature,
   containerUp,
   containerExec,
@@ -139,12 +140,8 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
   await createWorktree(gitRoot, worktreePath, branchName, options.base);
 
   if (!hasDevcontainerConfig(worktreePath)) {
-    await removeWorktree(gitRoot, worktreePath);
-    await deleteBranch(gitRoot, branchName);
-    throw new Error(
-      `No .devcontainer/devcontainer.json found in ${worktreePath}. ` +
-      `The target project must have a devcontainer configuration.`,
-    );
+    log("No devcontainer config found — using default configuration.");
+    createDefaultDevcontainerConfig(worktreePath);
   }
 
   ensureCopilotFeature(worktreePath);

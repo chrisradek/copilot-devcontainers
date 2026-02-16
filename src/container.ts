@@ -95,6 +95,27 @@ function stripJsonComments(text: string): string {
 }
 
 /**
+ * Create a default devcontainer.json file in the workspace folder.
+ * This is used when a repo doesn't have its own devcontainer config.
+ */
+export function createDefaultDevcontainerConfig(workspaceFolder: string): void {
+  const devcontainerDir = path.join(workspaceFolder, ".devcontainer");
+  const configPath = path.join(devcontainerDir, "devcontainer.json");
+
+  const defaultConfig = {
+    name: "Copilot Sandbox",
+    image: "mcr.microsoft.com/devcontainers/universal:2",
+    features: {
+      [COPILOT_CLI_FEATURE]: {},
+    },
+    postCreateCommand: SAFE_DIRECTORY_CMD,
+  };
+
+  fs.mkdirSync(devcontainerDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, "\t") + "\n", "utf-8");
+}
+
+/**
  * Ensure the devcontainer config includes the copilot CLI feature and
  * marks all directories as safe for git. Modifies the config in-place
  * (the worktree is a disposable branch, so this won't affect the main repo).
