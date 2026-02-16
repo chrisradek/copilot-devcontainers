@@ -475,16 +475,18 @@ server.registerTool(
       status: z.enum(["pending", "in_progress", "done", "failed", "cancelled"]).optional().describe("New status"),
       branch: z.string().optional().describe("Sandbox branch name"),
       sessionId: z.string().optional().describe("Session ID"),
+      reviewSessionId: z.string().optional().describe("Session ID for the code review session"),
       result: z.string().optional().describe("Result or outcome of the task"),
     },
   },
-  async ({ dir, id, status, branch, sessionId, result }) => {
+  async ({ dir, id, status, branch, sessionId, reviewSessionId, result }) => {
     try {
       const store = getStore(dir);
       const updates: Record<string, unknown> = {};
       if (status !== undefined) updates.status = status;
       if (branch !== undefined) updates.branch = branch;
       if (sessionId !== undefined) updates.sessionId = sessionId;
+      if (reviewSessionId !== undefined) updates.reviewSessionId = reviewSessionId;
       if (result !== undefined) updates.result = result;
 
       const task = store.updateTask(id, updates);
@@ -498,6 +500,7 @@ server.registerTool(
       ];
       if (task.branch) lines.push(`Branch: ${task.branch}`);
       if (task.sessionId) lines.push(`Session ID: ${task.sessionId}`);
+      if (task.reviewSessionId) lines.push(`Review Session ID: ${task.reviewSessionId}`);
       if (task.result) lines.push(`Result: ${task.result}`);
 
       return {
@@ -541,6 +544,7 @@ server.registerTool(
         lines.push(`  Orchestration: ${task.orchestrationId}`);
         if (task.branch) lines.push(`  Branch: ${task.branch}`);
         if (task.sessionId) lines.push(`  Session ID: ${task.sessionId}`);
+        if (task.reviewSessionId) lines.push(`  Review Session ID: ${task.reviewSessionId}`);
         if (task.dependencies.length > 0) {
           lines.push(`  Dependencies: ${task.dependencies.join(", ")}`);
         }
@@ -595,6 +599,7 @@ server.registerTool(
       ];
       if (task.branch) lines.push(`Branch: ${task.branch}`);
       if (task.sessionId) lines.push(`Session ID: ${task.sessionId}`);
+      if (task.reviewSessionId) lines.push(`Review Session ID: ${task.reviewSessionId}`);
       if (task.result) lines.push(`Result: ${task.result}`);
 
       return {

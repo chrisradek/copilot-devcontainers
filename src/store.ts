@@ -19,6 +19,7 @@ export interface OrchestratorTask {
   status: "pending" | "in_progress" | "done" | "failed" | "cancelled";
   branch?: string;
   sessionId?: string;
+  reviewSessionId?: string;
   dependencies: string[];
   createdAt: string;
   updatedAt: string;
@@ -134,7 +135,7 @@ export class OrchestratorStore {
 
   updateTask(
     id: string,
-    updates: Partial<Pick<OrchestratorTask, "status" | "branch" | "sessionId" | "result">>,
+    updates: Partial<Pick<OrchestratorTask, "status" | "branch" | "sessionId" | "reviewSessionId" | "result">>,
   ): OrchestratorTask {
     const data = this.read();
     const task = data.tasks[id];
