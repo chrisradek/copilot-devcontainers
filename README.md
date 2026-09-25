@@ -1,6 +1,6 @@
 # copilot-sandbox
 
-A standalone CLI tool for running coding agents inside isolated dev containers on git worktrees. This keeps agents from modifying your main working tree — all changes happen in a disposable worktree+container sandbox.
+A standalone CLI tool for running Copilot CLI or Claude Code inside isolated dev containers on git worktrees. This keeps agents from modifying your main working tree — all changes happen in a disposable worktree+container sandbox.
 
 ## Prerequisites
 
@@ -38,6 +38,9 @@ copilot-sandbox up --dir /path/to/your/project
 # Or run a non-interactive task
 copilot-sandbox up --dir /path/to/your/project --task "Fix the login bug"
 
+# Start Claude Code instead of the default Copilot CLI
+copilot-sandbox up --dir /path/to/your/project --agent claude
+
 # Reconnect to an existing sandbox
 copilot-sandbox exec --branch sandbox/2026-02-07T04-30-00
 
@@ -62,10 +65,11 @@ Sets up the MCP server config and orchestrator agent for a project or user scope
 
 ### `copilot-sandbox up`
 
-Creates a git worktree, starts a dev container, and runs `copilot` inside it.
+Creates a git worktree, starts a dev container, and runs the selected coding agent inside it. Copilot CLI is the default.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--agent <copilot\|claude>` | `copilot` | Coding agent to install and run |
 | `--branch <name>` | Auto-generated (`sandbox/<timestamp>`) | Branch name for the worktree |
 | `--base <ref>` | `HEAD` | Base ref to branch from |
 | `--dir <path>` | Current directory | Path to the git repo |
@@ -76,14 +80,15 @@ Creates a git worktree, starts a dev container, and runs `copilot` inside it.
 
 ### `copilot-sandbox exec`
 
-Reconnects to an existing sandbox (ensures container is running, then launches copilot).
+Reconnects to an existing sandbox (ensures the container is running, then launches the saved agent). Existing sandboxes created before agent selection default to Copilot.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--agent <copilot\|claude>` | Saved agent | Override the sandbox's saved agent |
 | `--branch <name>` | *required* | Branch/worktree to reconnect to |
 | `--dir <path>` | Current directory | Path to the git repo |
 | `--task <description>` | — | Run copilot non-interactively with this task |
-| `--session-id <id>` | — | Resume a specific copilot session by ID |
+| `--session-id <id>` | — | Resume a specific agent session by ID |
 | `--interactive` | Default when no `--task` | Start an interactive copilot session |
 | `--verbose` | — | Stream devcontainer setup logs in real time |
 
@@ -131,10 +136,13 @@ Running `copilot-sandbox init` configures the MCP server automatically. To manua
 
 1. **Worktree creation** — Creates a new git worktree and branch from the specified base ref, isolating changes from your main working tree.
 2. **Default config** — If no `.devcontainer/devcontainer.json` exists, a default config is created automatically.
-3. **Auth forwarding** — Automatically runs `gh auth token` on the host and passes the token as `GH_TOKEN` into the container, so copilot is pre-authenticated.
-4. **Container startup** — Uses the `@devcontainers/cli` to spin up a dev container using the project's `.devcontainer/devcontainer.json`. The main `.git` directory is bind-mounted so git operations work inside the container.
-5. **Agent execution** — Runs `copilot` inside the container, either interactively or with a specified task.
-6. **Cleanup** — `copilot-sandbox down` stops the container, removes the worktree, and deletes the branch.
+3. **Agent setup** — Adds the selected agent's Dev Container Feature to the sandbox worktree. Claude Code uses Anthropic's `ghcr.io/anthropics/devcontainer-features/claude-code:1.0` feature; Copilot CLI remains the default.
+4. **Auth forwarding** — Passes the host's `gh auth token` into the container as `GH_TOKEN`. If `ANTHROPIC_API_KEY` is set on the host, it is also passed to the container; otherwise, authenticate Claude Code inside the container.
+5. **Container startup** — Uses the `@devcontainers/cli` to spin up a dev container using the project's `.devcontainer/devcontainer.json`. The main `.git` directory is bind-mounted so git operations work inside the container.
+6. **Agent execution** — Runs Copilot CLI or Claude Code inside the container, either interactively or with a specified task. Selected agent is saved per sandbox and reused by `exec`.
+7. **Cleanup** — `copilot-sandbox down` stops the container, removes the worktree, and deletes the branch.
+
+**Automation permissions:** Non-interactive Claude Code tasks use `--dangerously-skip-permissions`, matching the autonomous behavior of Copilot's `--allow-all`. Only use this with repositories and tasks you trust; Claude Code's dev container does not prevent access to secrets available inside the container.
 
 ## Development
 
