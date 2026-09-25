@@ -2,6 +2,11 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as crypto from "node:crypto";
 import {
+  getAgentDefinition,
+  getAgentExecutionEnvs,
+  type AgentName,
+} from "./agent.js";
+import {
   getGitRoot,
   getRepoName,
   createWorktree,
@@ -21,8 +26,9 @@ import {
 import {
   hasDevcontainerConfig,
   createDefaultDevcontainerConfig,
-  ensureCopilotFeature,
+  ensureAgentSupport,
   ensureMultiPhaseSkill,
+  addToWorktreeExclude,
   containerUp,
   containerExec,
   containerExecInteractive,
@@ -34,6 +40,7 @@ import {
 
 export interface SandboxUpOptions {
   dir: string;
+  agent?: AgentName;
   branch?: string;
   base: string;
   worktreeDir?: string;
@@ -55,11 +62,13 @@ export interface SandboxInfo {
   branch: string;
   worktreePath: string;
   head: string;
+  agent: AgentName;
   sessions: SessionEntry[];
 }
 
 /** Result from sandbox operations that can be used programmatically. */
 export interface SandboxUpResult {
+  agent: AgentName;
   branch: string;
   worktreePath: string;
   containerId?: string;
@@ -89,17 +98,19 @@ function log(msg: string): void {
 
 // ── Session metadata ──
 
-interface SessionEntry {
+export interface SessionEntry {
   sessionId: string;
+  agent?: AgentName;
   createdAt: string;
   task?: string;
 }
 
-interface SandboxMetadata {
+export interface SandboxMetadata {
+  agent?: AgentName;
   sessions: SessionEntry[];
 }
 
-function readSandboxMetadata(worktreePath: string): SandboxMetadata {
+export function readSandboxMetadata(worktreePath: string): SandboxMetadata {
   const metaPath = path.join(worktreePath, SESSION_METADATA_FILE);
   try {
     const raw = fs.readFileSync(metaPath, "utf-8");
@@ -120,18 +131,46 @@ function addSessionEntry(worktreePath: string, entry: SessionEntry): void {
   writeSandboxMetadata(worktreePath, metadata);
 }
 
+function getSandboxAgent(
+  worktreePath: string,
+  requestedAgent?: AgentName,
+  sessionId?: string,
+): AgentName {
+  if (requestedAgent) return requestedAgent;
+
+  const metadata = readSandboxMetadata(worktreePath);
+  if (sessionId) {
+    const session = metadata.sessions.find((entry) => entry.sessionId === sessionId);
+    if (session?.agent) return session.agent;
+  }
+  return metadata.agent ?? "copilot";
+}
+
 // ── Core functions (return structured results, no process.exit) ──
 
 /**
- * Prepare remote env vars (GH_TOKEN forwarding).
+ * Prepare credentials for the selected agent.
  */
-function prepareRemoteEnvs(): { remoteEnvs: Record<string, string>; hasToken: boolean } {
+function prepareRemoteEnvs(
+  agent: AgentName,
+  includeAgentCredentials = true,
+): { remoteEnvs: Record<string, string>; hasToken: boolean } {
   const remoteEnvs: Record<string, string> = {};
-  const ghToken = getHostGitHubToken();
-  if (ghToken) {
-    remoteEnvs["GH_TOKEN"] = ghToken;
+  if (agent === "copilot") {
+    const ghToken = getHostGitHubToken();
+    if (ghToken) {
+      remoteEnvs.GH_TOKEN = ghToken;
+    }
+    return { remoteEnvs, hasToken: !!ghToken };
   }
-  return { remoteEnvs, hasToken: !!ghToken };
+
+  if (includeAgentCredentials) {
+    Object.assign(remoteEnvs, getAgentExecutionEnvs(agent));
+  }
+  return {
+    remoteEnvs,
+    hasToken: !!(remoteEnvs.CODEX_API_KEY || remoteEnvs.CODEX_ACCESS_TOKEN),
+  };
 }
 
 /**
@@ -139,6 +178,7 @@ function prepareRemoteEnvs(): { remoteEnvs: Record<string, string>; hasToken: bo
  * Returns structured result or throws on failure.
  */
 export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxUpResult> {
+  const agent = options.agent ?? "copilot";
   const gitRoot = getGitRoot(options.dir);
   const repoName = getRepoName(options.dir);
 
@@ -152,17 +192,19 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
 
   if (!hasDevcontainerConfig(worktreePath)) {
     log("No devcontainer config found — using default configuration.");
-    createDefaultDevcontainerConfig(worktreePath);
+    createDefaultDevcontainerConfig(worktreePath, agent);
   }
 
-  ensureCopilotFeature(worktreePath);
+  ensureAgentSupport(worktreePath, agent);
   ensureMultiPhaseSkill(worktreePath);
+  addToWorktreeExclude(worktreePath, SESSION_METADATA_FILE);
+  writeSandboxMetadata(worktreePath, { agent, sessions: [] });
 
-  const { remoteEnvs } = prepareRemoteEnvs();
+  const { remoteEnvs: containerEnvs } = prepareRemoteEnvs(agent, false);
 
   let upResult: ContainerUpResult;
   try {
-    upResult = await containerUp(worktreePath, remoteEnvs, { verbose: options.verbose });
+    upResult = await containerUp(worktreePath, containerEnvs, { verbose: options.verbose });
   } catch (err) {
     await removeWorktree(gitRoot, worktreePath);
     await deleteBranch(gitRoot, branchName);
@@ -176,6 +218,7 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
   }
 
   const result: SandboxUpResult = {
+    agent,
     branch: branchName,
     worktreePath,
     containerId: upResult.containerId,
@@ -184,38 +227,51 @@ export async function sandboxUpCore(options: SandboxUpOptions): Promise<SandboxU
   };
 
   if (options.task) {
-    const sessionId = options.sessionId ?? crypto.randomUUID();
+    const definition = getAgentDefinition(agent);
+    let sessionId = options.sessionId ??
+      (agent === "copilot" ? crypto.randomUUID() : undefined);
+    const { remoteEnvs } = prepareRemoteEnvs(agent);
+    result.exitCode = await containerExec(
+      worktreePath,
+      definition.buildTaskCommand(options.task, sessionId),
+      remoteEnvs,
+      (line) => {
+        sessionId ??= definition.parseSessionId(line);
+        options.onOutput?.(line);
+      },
+    );
     result.sessionId = sessionId;
-    result.exitCode = await containerExec(worktreePath, [
-      "copilot",
-      "-p",
-      options.task,
-      `--resume=${sessionId}`,
-      "--allow-all",
-      "--no-ask-user",
-    ], remoteEnvs, options.onOutput);
-    addSessionEntry(worktreePath, {
-      sessionId,
-      createdAt: new Date().toISOString(),
-      task: options.task,
-    });
+    if (sessionId) {
+      addSessionEntry(worktreePath, {
+        sessionId,
+        agent,
+        createdAt: new Date().toISOString(),
+        task: options.task,
+      });
+    }
   }
 
   return result;
 }
 
 /**
- * Core "exec" logic: ensure container is running, run copilot with a task.
+ * Core "exec" logic: ensure container is running, then run an agent task.
  * Returns exit code or throws on failure.
  */
 export async function sandboxExecCore(options: {
   dir: string;
   branch: string;
+  agent?: AgentName;
   task: string;
   sessionId?: string;
   verbose?: boolean;
   onOutput?: (line: string) => void;
-}): Promise<{ worktreePath: string; exitCode: number; sessionId: string }> {
+}): Promise<{
+  agent: AgentName;
+  worktreePath: string;
+  exitCode: number;
+  sessionId?: string;
+}> {
   const gitRoot = getGitRoot(options.dir);
   const worktrees = await listWorktrees(gitRoot);
 
@@ -224,35 +280,39 @@ export async function sandboxExecCore(options: {
     throw new Error(`No worktree found for branch "${options.branch}".`);
   }
 
-  const { remoteEnvs } = prepareRemoteEnvs();
+  const agent = getSandboxAgent(target.path, options.agent, options.sessionId);
+  ensureAgentSupport(target.path, agent);
+  const { remoteEnvs: containerEnvs } = prepareRemoteEnvs(agent, false);
 
-  const upResult = await containerUp(target.path, remoteEnvs, { verbose: options.verbose });
+  const upResult = await containerUp(target.path, containerEnvs, { verbose: options.verbose });
   if (upResult.outcome !== "success") {
     throw new Error(`Container failed to start: ${upResult.message ?? "unknown error"}`);
   }
 
-  // Use provided sessionId to resume, or generate a new one
-  const sessionId = options.sessionId ?? crypto.randomUUID();
-  const copilotArgs = [
-    "copilot",
-    "-p",
-    options.task,
-    `--resume=${sessionId}`,
-    "--allow-all",
-    "--no-ask-user",
-  ];
+  const definition = getAgentDefinition(agent);
+  let sessionId = options.sessionId ??
+    (agent === "copilot" ? crypto.randomUUID() : undefined);
+  const { remoteEnvs } = prepareRemoteEnvs(agent);
+  const exitCode = await containerExec(
+    target.path,
+    definition.buildTaskCommand(options.task, sessionId),
+    remoteEnvs,
+    (line) => {
+      sessionId ??= definition.parseSessionId(line);
+      options.onOutput?.(line);
+    },
+  );
 
-  const exitCode = await containerExec(target.path, copilotArgs, remoteEnvs, options.onOutput);
-
-  if (!options.sessionId) {
+  if (!options.sessionId && sessionId) {
     addSessionEntry(target.path, {
       sessionId,
+      agent,
       createdAt: new Date().toISOString(),
       task: options.task,
     });
   }
 
-  return { worktreePath: target.path, exitCode, sessionId };
+  return { agent, worktreePath: target.path, exitCode, sessionId };
 }
 
 /**
@@ -359,6 +419,7 @@ export async function sandboxListCore(dir: string): Promise<SandboxListResult> {
       branch: wt.branch,
       worktreePath: wt.path,
       head: wt.head,
+      agent: readSandboxMetadata(wt.path).agent ?? "copilot",
       sessions: readSandboxMetadata(wt.path).sessions,
     }));
 
@@ -432,26 +493,31 @@ export async function sandboxCleanupCore(options: {
 // ── CLI wrappers (logging + process.exit) ──
 
 /**
- * Main "up" flow: create worktree, start container, run copilot.
+ * Main "up" flow: create worktree, start container, and run the selected agent.
  */
 export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
+  const agent = options.agent ?? "copilot";
+  const definition = getAgentDefinition(agent);
   const branchName = options.branch ?? generateBranchName();
 
-  log(`Creating sandbox (branch: ${branchName}, base: ${options.base})`);
+  log(`Creating ${definition.displayName} sandbox (branch: ${branchName}, base: ${options.base})`);
 
-  const { hasToken } = prepareRemoteEnvs();
+  const { hasToken } = prepareRemoteEnvs(agent);
   if (hasToken) {
-    log(`Forwarding GitHub auth token from host.`);
-  } else {
+    log(`Forwarding ${definition.displayName} credentials from host.`);
+  } else if (agent === "copilot") {
     log(`Warning: Could not get GitHub token from host (gh auth token failed).`);
-    log(`You may need to run /login inside copilot.`);
+    log(`You may need to run /login inside Copilot.`);
+  } else {
+    log(`No Codex API key or access token found on the host.`);
+    log(`You may need to run codex login --device-auth inside the container.`);
   }
 
   log(`Starting dev container...`);
 
   let result: SandboxUpResult;
   try {
-    result = await sandboxUpCore({ ...options, branch: branchName });
+    result = await sandboxUpCore({ ...options, agent, branch: branchName });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
@@ -463,7 +529,7 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
   log(`Workspace: ${result.remoteWorkspaceFolder}`);
 
   if (options.task) {
-    log(`\ncopilot exited with code ${result.exitCode}`);
+    log(`\n${definition.displayName} exited with code ${result.exitCode}`);
     if (result.sessionId) {
       log(`Session ID: ${result.sessionId}`);
     }
@@ -474,11 +540,15 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
   } else {
     // Interactive mode — sandboxUpCore doesn't handle interactive,
     // so we do it here after the container is ready.
-    log(`\nStarting interactive copilot session...`);
+    log(`\nStarting interactive ${definition.displayName} session...`);
     log(`(Use Ctrl+C or exit to end the session)\n`);
 
-    const { remoteEnvs } = prepareRemoteEnvs();
-    const child = containerExecInteractive(result.worktreePath, ["copilot"], remoteEnvs);
+    const { remoteEnvs } = prepareRemoteEnvs(agent);
+    const child = containerExecInteractive(
+      result.worktreePath,
+      definition.buildInteractiveCommand(options.sessionId),
+      remoteEnvs,
+    );
 
     await new Promise<void>((resolve) => {
       child.on("close", () => resolve());
@@ -495,6 +565,7 @@ export async function sandboxUp(options: SandboxUpOptions): Promise<void> {
 export interface SandboxExecOptions {
   dir: string;
   branch: string;
+  agent?: AgentName;
   task?: string;
   sessionId?: string;
   interactive: boolean;
@@ -502,25 +573,45 @@ export interface SandboxExecOptions {
 }
 
 /**
- * Reconnect to an existing sandbox: ensure container is running, then exec copilot.
+ * Reconnect to an existing sandbox and run the selected agent.
  */
 export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
-  const { hasToken } = prepareRemoteEnvs();
+  const gitRoot = getGitRoot(options.dir);
+  const worktrees = await listWorktrees(gitRoot);
+  const target = worktrees.find((wt) => wt.branch === options.branch);
+  if (!target) {
+    log(`No worktree found for branch "${options.branch}".`);
+    log(`Use 'copilot-sandbox list' to see active sandboxes.`);
+    process.exit(1);
+  }
+
+  const agent = getSandboxAgent(target.path, options.agent, options.sessionId);
+  const definition = getAgentDefinition(agent);
+  const { hasToken } = prepareRemoteEnvs(agent);
   if (hasToken) {
-    log(`Forwarding GitHub auth token from host.`);
-  } else {
+    log(`Forwarding ${definition.displayName} credentials from host.`);
+  } else if (agent === "copilot") {
     log(`Warning: Could not get GitHub token from host (gh auth token failed).`);
-    log(`You may need to run /login inside copilot.`);
+    log(`You may need to run /login inside Copilot.`);
+  } else {
+    log(`No Codex API key or access token found on the host.`);
+    log(`You may need to run codex login --device-auth inside the container.`);
   }
 
   log(`Ensuring dev container is running...`);
 
   if (options.task) {
-    let result: { worktreePath: string; exitCode: number; sessionId: string };
+    let result: {
+      agent: AgentName;
+      worktreePath: string;
+      exitCode: number;
+      sessionId?: string;
+    };
     try {
       result = await sandboxExecCore({
         dir: options.dir,
         branch: options.branch,
+        agent,
         task: options.task,
         sessionId: options.sessionId,
         verbose: options.verbose,
@@ -530,23 +621,16 @@ export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
       log(`Error: ${msg}`);
       process.exit(1);
     }
-    log(`\ncopilot exited with code ${result.exitCode}`);
-    log(`Session ID: ${result.sessionId}`);
-  } else {
-    // Interactive — need to find worktree and ensure container manually
-    const gitRoot = getGitRoot(options.dir);
-    const worktrees = await listWorktrees(gitRoot);
-    const target = worktrees.find((wt) => wt.branch === options.branch);
-    if (!target) {
-      log(`No worktree found for branch "${options.branch}".`);
-      log(`Use 'copilot-sandbox list' to see active sandboxes.`);
-      process.exit(1);
+    log(`\n${definition.displayName} exited with code ${result.exitCode}`);
+    if (result.sessionId) {
+      log(`Session ID: ${result.sessionId}`);
     }
-
-    const { remoteEnvs } = prepareRemoteEnvs();
+  } else {
+    ensureAgentSupport(target.path, agent);
+    const { remoteEnvs: containerEnvs } = prepareRemoteEnvs(agent, false);
     let upResult: ContainerUpResult;
     try {
-      upResult = await containerUp(target.path, remoteEnvs, { verbose: options.verbose });
+      upResult = await containerUp(target.path, containerEnvs, { verbose: options.verbose });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Error starting container: ${msg}`);
@@ -559,10 +643,15 @@ export async function sandboxExec(options: SandboxExecOptions): Promise<void> {
     }
 
     log(`Container ready (id: ${upResult.containerId?.slice(0, 12)})`);
-    log(`\nResuming interactive copilot session...`);
+    log(`\nStarting interactive ${definition.displayName} session...`);
     log(`(Use Ctrl+C or exit to end the session)\n`);
 
-    const child = containerExecInteractive(target.path, ["copilot"], remoteEnvs);
+    const { remoteEnvs } = prepareRemoteEnvs(agent);
+    const child = containerExecInteractive(
+      target.path,
+      definition.buildInteractiveCommand(options.sessionId),
+      remoteEnvs,
+    );
 
     await new Promise<void>((resolve) => {
       child.on("close", () => resolve());
@@ -608,10 +697,11 @@ export async function sandboxList(dir: string): Promise<void> {
     log(`  Branch: ${s.branch}`);
     log(`  Path:   ${s.worktreePath}`);
     log(`  HEAD:   ${s.head?.slice(0, 8)}`);
+    log(`  Agent:  ${s.agent}`);
     if (s.sessions.length > 0) {
       log(`  Sessions:`);
       for (const sess of s.sessions) {
-        log(`    - ${sess.sessionId}${sess.task ? ` (${sess.task.slice(0, 60)}${sess.task.length > 60 ? "..." : ""})` : ""}`);
+        log(`    - ${sess.sessionId} [${sess.agent ?? s.agent}]${sess.task ? ` (${sess.task.slice(0, 60)}${sess.task.length > 60 ? "..." : ""})` : ""}`);
       }
     }
     log(``);

@@ -6,6 +6,7 @@ import * as os from "node:os";
 import {
   sandboxListCore,
   sandboxCleanupCore,
+  readSandboxMetadata,
 } from "../src/sandbox.js";
 import {
   createWorktree,
@@ -53,10 +54,29 @@ describe("sandbox", () => {
       expect(result.sandboxes[0].branch).toBe(branchName);
       expect(result.sandboxes[0].worktreePath).toBe(worktreePath);
       expect(result.sandboxes[0].head).toBeDefined();
+      expect(result.sandboxes[0].agent).toBe("copilot");
       expect(result.sandboxes[0].sessions).toEqual([]);
 
       await removeWorktree(testRepoDir, worktreePath);
       await deleteBranch(testRepoDir, branchName);
+    });
+
+    it("should read the agent and session agent from sandbox metadata", () => {
+      fs.writeFileSync(
+        path.join(testRepoDir, ".copilot-sandbox.json"),
+        JSON.stringify({
+          agent: "codex",
+          sessions: [{
+            sessionId: "thread-1",
+            agent: "codex",
+            createdAt: "2026-09-25T00:00:00.000Z",
+          }],
+        }),
+      );
+
+      const metadata = readSandboxMetadata(testRepoDir);
+      expect(metadata.agent).toBe("codex");
+      expect(metadata.sessions[0].agent).toBe("codex");
     });
 
     it("should filter out bare repositories", async () => {
