@@ -6,6 +6,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { AGENT_NAMES } from "./agent.js";
 import {
   sandboxUpCore,
   sandboxDownCore,
@@ -124,19 +125,21 @@ server.registerTool(
   {
     description: "Create a new sandbox (git worktree + dev container). " +
     "Each sandbox is fully isolated with its own branch and container. " +
-    "Use sandbox_exec to run copilot tasks in the sandbox after creation.",
+    "Use sandbox_exec to run agent tasks in the sandbox after creation.",
     inputSchema: {
       dir: z.string().describe("Path to the git repository"),
+      agent: z.enum(AGENT_NAMES).default("copilot").describe("Agent to install and run (default: copilot)"),
       branch: z.string().optional().describe("Branch name for the worktree (default: auto-generated)"),
       base: z.string().default("HEAD").describe("Base ref to branch from (default: HEAD)"),
       worktreeDir: z.string().optional().describe("Where to create worktrees (default: ../<repo>-worktrees/)"),
     },
   },
-  async ({ dir, branch, base, worktreeDir }, extra) => {
+  async ({ dir, agent, branch, base, worktreeDir }, extra) => {
     const notifier = createOutputNotifier(extra);
     try {
       const result = await sandboxUpCore({
         dir,
+        agent,
         branch,
         base,
         worktreeDir,
@@ -147,6 +150,7 @@ server.registerTool(
 
       const lines = [
         `Sandbox created successfully.`,
+        `Agent: ${result.agent}`,
         `Branch: ${result.branch}`,
         `Worktree: ${result.worktreePath}`,
         `Container: ${result.containerId?.slice(0, 12) ?? "unknown"}`,
@@ -171,18 +175,27 @@ server.registerTool(
 server.registerTool(
   "sandbox_exec",
   {
-    description: "Run a copilot agent with a task in an existing sandbox. The container will be started if not already running.",
+    description: "Run a coding agent with a task in an existing sandbox. The container will be started if not already running.",
     inputSchema: {
       dir: z.string().describe("Path to the git repository"),
       branch: z.string().describe("Branch name of the existing sandbox"),
-      task: z.string().describe("Task description for copilot to work on"),
-      sessionId: z.string().describe("Session ID for the copilot session. Pass the same ID returned from sandbox_up to resume, or generate a new UUID for a fresh session."),
+      agent: z.enum(AGENT_NAMES).optional().describe("Agent to run (default: the sandbox or session agent)"),
+      task: z.string().describe("Task description for the agent to work on"),
+      sessionId: z.string().optional().describe("Agent session ID to resume. Omit to start a new session."),
     },
   },
-  async ({ dir, branch, task, sessionId }, extra) => {
+  async ({ dir, branch, agent, task, sessionId }, extra) => {
     const notifier = createOutputNotifier(extra);
     try {
-      const result = await sandboxExecCore({ dir, branch, task, sessionId, verbose: false, onOutput: notifier.onOutput });
+      const result = await sandboxExecCore({
+        dir,
+        branch,
+        agent,
+        task,
+        sessionId,
+        verbose: false,
+        onOutput: notifier.onOutput,
+      });
 
       const captured = notifier.getCapturedOutput();
       const outputSection = captured.length > 0
@@ -192,7 +205,7 @@ server.registerTool(
       return {
         content: [{
           type: "text" as const,
-          text: `Copilot finished in sandbox "${branch}".\nWorktree: ${result.worktreePath}\nExit code: ${result.exitCode}\nSession ID: ${result.sessionId}${outputSection}`,
+          text: `${result.agent} finished in sandbox "${branch}".\nWorktree: ${result.worktreePath}\nExit code: ${result.exitCode}${result.sessionId ? `\nSession ID: ${result.sessionId}` : ""}${outputSection}`,
         }],
       };
     } catch (err) {
@@ -330,10 +343,11 @@ server.registerTool(
         lines.push(`  Branch: ${s.branch}`);
         lines.push(`  Path:   ${s.worktreePath}`);
         lines.push(`  HEAD:   ${s.head?.slice(0, 8)}`);
+        lines.push(`  Agent:  ${s.agent}`);
         if (s.sessions.length > 0) {
           lines.push(`  Sessions:`);
           for (const sess of s.sessions) {
-            lines.push(`    - ${sess.sessionId}${sess.task ? ` (${sess.task.slice(0, 60)}${sess.task.length > 60 ? "..." : ""})` : ""}`);
+            lines.push(`    - ${sess.sessionId} [${sess.agent ?? s.agent}]${sess.task ? ` (${sess.task.slice(0, 60)}${sess.task.length > 60 ? "..." : ""})` : ""}`);
           }
         }
         lines.push(``);

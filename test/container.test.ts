@@ -5,6 +5,7 @@ import * as os from "node:os";
 import {
   hasDevcontainerConfig,
   createDefaultDevcontainerConfig,
+  ensureAgentSupport,
   ensureCopilotFeature,
   resolveWorktreeMainGitDir,
   getHostGitHubToken,
@@ -53,6 +54,19 @@ describe("container", () => {
 
       fs.rmSync(tmpDir, { recursive: true });
     });
+
+    it("should create a Codex config using the official installer", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "container-test-"));
+      createDefaultDevcontainerConfig(tmpDir, "codex");
+
+      const configPath = path.join(tmpDir, ".devcontainer", "devcontainer.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(config.name).toBe("Codex Sandbox");
+      expect(config.postCreateCommand).toContain("chatgpt.com/codex/install.sh");
+      expect(config.features).toBeUndefined();
+
+      fs.rmSync(tmpDir, { recursive: true });
+    });
   });
 
   describe("ensureCopilotFeature", () => {
@@ -68,6 +82,25 @@ describe("container", () => {
       expect(config.features["ghcr.io/devcontainers/features/copilot-cli:1"]).toBeDefined();
 
       fs.rmSync(tmpDir, { recursive: true });
+    });
+
+    describe("ensureAgentSupport", () => {
+      it("should add the official Codex installer to an existing config", () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "container-test-"));
+        const configPath = path.join(tmpDir, ".devcontainer.json");
+        fs.writeFileSync(configPath, JSON.stringify({
+          name: "Test",
+          postCreateCommand: "npm install",
+        }, null, 2));
+
+        ensureAgentSupport(tmpDir, "codex");
+
+        const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        expect(config.postCreateCommand).toContain("npm install");
+        expect(config.postCreateCommand).toContain("chatgpt.com/codex/install.sh");
+
+        fs.rmSync(tmpDir, { recursive: true });
+      });
     });
 
     it("should handle JSONC with comments", () => {

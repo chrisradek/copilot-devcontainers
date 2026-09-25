@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as path from "node:path";
+import { isAgentName, type AgentName } from "./agent.js";
 import { sandboxUp, sandboxDown, sandboxList, sandboxExec } from "./sandbox.js";
 import { initSandbox } from "./init.js";
 
@@ -9,8 +10,8 @@ function printUsage(): void {
 Usage: copilot-sandbox <command> [options]
 
 Commands:
-  up      Create a sandbox (worktree + dev container) and run copilot
-  exec    Reconnect to an existing sandbox and run copilot
+  up      Create a sandbox (worktree + dev container) and run an agent
+  exec    Reconnect to an existing sandbox and run an agent
   down    Tear down a sandbox (stop container, remove worktree)
   list    List active sandboxes
   init    Set up copilot-sandbox MCP server and agent for a project or user
@@ -19,17 +20,19 @@ Options for 'up':
   --branch <name>        Branch name for the worktree (default: auto-generated)
   --base <ref>           Base ref to branch from (default: HEAD)
   --dir <path>           Path to the git repo (default: cwd)
-  --task <description>   Run copilot non-interactively with this task
-  --interactive          Start an interactive copilot session (default)
+  --agent <name>         Agent to run: copilot or codex (default: copilot)
+  --task <description>   Run the agent non-interactively with this task
+  --interactive          Start an interactive agent session (default)
   --worktree-dir <path>  Where to create worktrees (default: ../<repo>-worktrees/)
   --verbose              Stream devcontainer setup logs in real time
 
 Options for 'exec':
   --branch <name>        Branch/worktree to reconnect to (required)
   --dir <path>           Path to the git repo (default: cwd)
-  --task <description>   Run copilot non-interactively with this task
-  --session-id <id>      Resume a specific copilot session by ID
-  --interactive          Start an interactive copilot session (default)
+  --agent <name>         Agent to run (default: sandbox/session agent)
+  --task <description>   Run the agent non-interactively with this task
+  --session-id <id>      Resume a specific agent session by ID
+  --interactive          Start an interactive agent session (default)
   --verbose              Stream devcontainer setup logs in real time
 
 Options for 'down':
@@ -57,6 +60,7 @@ Examples:
 
 interface UpArgs {
   command: "up";
+  agent: AgentName;
   branch?: string;
   base: string;
   dir: string;
@@ -74,6 +78,7 @@ interface DownArgs {
 
 interface ExecArgs {
   command: "exec";
+  agent?: AgentName;
   branch: string;
   dir: string;
   task?: string;
@@ -126,11 +131,21 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   const dir = flagMap.get("dir") ?? process.cwd();
+  const rawAgent = flagMap.get("agent");
+  let agentFlag: AgentName | undefined;
+  if (rawAgent) {
+    if (!isAgentName(rawAgent)) {
+      process.stderr.write(`Error: --agent must be "copilot" or "codex"\n`);
+      process.exit(1);
+    }
+    agentFlag = rawAgent;
+  }
 
   switch (command) {
     case "up":
       return {
         command: "up",
+        agent: agentFlag ?? "copilot",
         branch: flagMap.get("branch"),
         base: flagMap.get("base") ?? "HEAD",
         dir: path.resolve(dir),
@@ -161,6 +176,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       }
       return {
         command: "exec",
+        agent: agentFlag,
         branch,
         dir: path.resolve(dir),
         task: flagMap.get("task"),
@@ -205,6 +221,7 @@ async function main(): Promise<void> {
     case "up":
       await sandboxUp({
         dir: parsed.dir,
+        agent: parsed.agent,
         branch: parsed.branch,
         base: parsed.base,
         worktreeDir: parsed.worktreeDir,
@@ -225,6 +242,7 @@ async function main(): Promise<void> {
       await sandboxExec({
         dir: parsed.dir,
         branch: parsed.branch,
+        agent: parsed.agent,
         task: parsed.task,
         sessionId: parsed.sessionId,
         interactive: parsed.interactive,
