@@ -124,19 +124,21 @@ server.registerTool(
   {
     description: "Create a new sandbox (git worktree + dev container). " +
     "Each sandbox is fully isolated with its own branch and container. " +
-    "Use sandbox_exec to run copilot tasks in the sandbox after creation.",
+    "Use sandbox_exec to run the selected coding agent in the sandbox after creation.",
     inputSchema: {
       dir: z.string().describe("Path to the git repository"),
+      agent: z.enum(["copilot", "claude"]).default("copilot").describe("Coding agent to use (default: copilot)"),
       branch: z.string().optional().describe("Branch name for the worktree (default: auto-generated)"),
       base: z.string().default("HEAD").describe("Base ref to branch from (default: HEAD)"),
       worktreeDir: z.string().optional().describe("Where to create worktrees (default: ../<repo>-worktrees/)"),
     },
   },
-  async ({ dir, branch, base, worktreeDir }, extra) => {
+  async ({ dir, agent, branch, base, worktreeDir }, extra) => {
     const notifier = createOutputNotifier(extra);
     try {
       const result = await sandboxUpCore({
         dir,
+        agent,
         branch,
         base,
         worktreeDir,
@@ -147,6 +149,7 @@ server.registerTool(
 
       const lines = [
         `Sandbox created successfully.`,
+        `Agent: ${result.agent}`,
         `Branch: ${result.branch}`,
         `Worktree: ${result.worktreePath}`,
         `Container: ${result.containerId?.slice(0, 12) ?? "unknown"}`,
@@ -171,18 +174,27 @@ server.registerTool(
 server.registerTool(
   "sandbox_exec",
   {
-    description: "Run a copilot agent with a task in an existing sandbox. The container will be started if not already running.",
+    description: "Run the sandbox's coding agent with a task. The container will be started if not already running.",
     inputSchema: {
       dir: z.string().describe("Path to the git repository"),
       branch: z.string().describe("Branch name of the existing sandbox"),
-      task: z.string().describe("Task description for copilot to work on"),
-      sessionId: z.string().describe("Session ID for the copilot session. Pass the same ID returned from sandbox_up to resume, or generate a new UUID for a fresh session."),
+      agent: z.enum(["copilot", "claude"]).optional().describe("Override the sandbox's saved agent"),
+      task: z.string().describe("Task description for the coding agent"),
+      sessionId: z.string().optional().describe("Session ID to resume; omit to start a new session"),
     },
   },
-  async ({ dir, branch, task, sessionId }, extra) => {
+  async ({ dir, branch, agent, task, sessionId }, extra) => {
     const notifier = createOutputNotifier(extra);
     try {
-      const result = await sandboxExecCore({ dir, branch, task, sessionId, verbose: false, onOutput: notifier.onOutput });
+      const result = await sandboxExecCore({
+        dir,
+        branch,
+        agent,
+        task,
+        sessionId,
+        verbose: false,
+        onOutput: notifier.onOutput,
+      });
 
       const captured = notifier.getCapturedOutput();
       const outputSection = captured.length > 0
@@ -192,7 +204,7 @@ server.registerTool(
       return {
         content: [{
           type: "text" as const,
-          text: `Copilot finished in sandbox "${branch}".\nWorktree: ${result.worktreePath}\nExit code: ${result.exitCode}\nSession ID: ${result.sessionId}${outputSection}`,
+          text: `${result.agent} finished in sandbox "${branch}".\nWorktree: ${result.worktreePath}\nExit code: ${result.exitCode}\nSession ID: ${result.sessionId}${outputSection}`,
         }],
       };
     } catch (err) {
@@ -328,6 +340,7 @@ server.registerTool(
       const lines = [`Active sandboxes (${sandboxes.length}):\n`];
       for (const s of sandboxes) {
         lines.push(`  Branch: ${s.branch}`);
+        lines.push(`  Agent:  ${s.agent}`);
         lines.push(`  Path:   ${s.worktreePath}`);
         lines.push(`  HEAD:   ${s.head?.slice(0, 8)}`);
         if (s.sessions.length > 0) {

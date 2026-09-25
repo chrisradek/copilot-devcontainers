@@ -2,6 +2,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_pro
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import type { AgentType } from "./agent.js";
 
 export interface ContainerUpResult {
   outcome: "success" | "error";
@@ -55,7 +56,12 @@ export function hasDevcontainerConfig(workspaceFolder: string): boolean {
 }
 
 const COPILOT_CLI_FEATURE = "ghcr.io/devcontainers/features/copilot-cli:1";
+const CLAUDE_CODE_FEATURE = "ghcr.io/anthropics/devcontainer-features/claude-code:1.0";
 const SAFE_DIRECTORY_CMD = "git config --global --add safe.directory '*'";
+
+function featureForAgent(agent: AgentType): string {
+  return agent === "claude" ? CLAUDE_CODE_FEATURE : COPILOT_CLI_FEATURE;
+}
 
 /**
  * Strip single-line (//) and multi-line comments from JSONC content,
@@ -98,15 +104,18 @@ function stripJsonComments(text: string): string {
  * Create a default devcontainer.json file in the workspace folder.
  * This is used when a repo doesn't have its own devcontainer config.
  */
-export function createDefaultDevcontainerConfig(workspaceFolder: string): void {
+export function createDefaultDevcontainerConfig(
+  workspaceFolder: string,
+  agent: AgentType = "copilot",
+): void {
   const devcontainerDir = path.join(workspaceFolder, ".devcontainer");
   const configPath = path.join(devcontainerDir, "devcontainer.json");
 
   const defaultConfig = {
-    name: "Copilot Sandbox",
+    name: `${agent === "claude" ? "Claude Code" : "Copilot"} Sandbox`,
     image: "mcr.microsoft.com/devcontainers/universal:2",
     features: {
-      [COPILOT_CLI_FEATURE]: {},
+      [featureForAgent(agent)]: {},
     },
     postCreateCommand: SAFE_DIRECTORY_CMD,
   };
@@ -116,11 +125,19 @@ export function createDefaultDevcontainerConfig(workspaceFolder: string): void {
 }
 
 /**
- * Ensure the devcontainer config includes the copilot CLI feature and
+ * Ensure the devcontainer config includes the selected coding-agent feature and
  * marks all directories as safe for git. Modifies the config in-place
  * (the worktree is a disposable branch, so this won't affect the main repo).
  */
 export function ensureCopilotFeature(workspaceFolder: string): void {
+  ensureAgentFeature(workspaceFolder, "copilot");
+}
+
+/**
+ * Ensure the selected coding agent is installed in the dev container and
+ * mark the workspace as safe for git.
+ */
+export function ensureAgentFeature(workspaceFolder: string, agent: AgentType): void {
   const locations = [
     path.join(workspaceFolder, ".devcontainer", "devcontainer.json"),
     path.join(workspaceFolder, ".devcontainer.json"),
@@ -134,12 +151,13 @@ export function ensureCopilotFeature(workspaceFolder: string): void {
 
   let modified = false;
 
-  // Add copilot-cli feature if not present
+  // Add the selected CLI feature if not present.
   if (!config.features) {
     config.features = {};
   }
-  if (!config.features[COPILOT_CLI_FEATURE]) {
-    config.features[COPILOT_CLI_FEATURE] = {};
+  const feature = featureForAgent(agent);
+  if (!config.features[feature]) {
+    config.features[feature] = {};
     modified = true;
   }
 

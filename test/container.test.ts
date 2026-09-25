@@ -6,6 +6,7 @@ import {
   hasDevcontainerConfig,
   createDefaultDevcontainerConfig,
   ensureCopilotFeature,
+  ensureAgentFeature,
   resolveWorktreeMainGitDir,
   getHostGitHubToken,
 } from "../src/container.js";
@@ -53,6 +54,18 @@ describe("container", () => {
 
       fs.rmSync(tmpDir, { recursive: true });
     });
+
+    it("should create a default devcontainer with Claude Code", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "container-test-"));
+      createDefaultDevcontainerConfig(tmpDir, "claude");
+
+      const configPath = path.join(tmpDir, ".devcontainer", "devcontainer.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(config.name).toBe("Claude Code Sandbox");
+      expect(config.features["ghcr.io/anthropics/devcontainer-features/claude-code:1.0"]).toBeDefined();
+
+      fs.rmSync(tmpDir, { recursive: true });
+    });
   });
 
   describe("ensureCopilotFeature", () => {
@@ -68,6 +81,23 @@ describe("container", () => {
       expect(config.features["ghcr.io/devcontainers/features/copilot-cli:1"]).toBeDefined();
 
       fs.rmSync(tmpDir, { recursive: true });
+    });
+
+    describe("ensureAgentFeature", () => {
+      it("should add Claude Code feature without adding the Copilot feature", () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "container-test-"));
+        const configPath = path.join(tmpDir, ".devcontainer.json");
+        fs.writeFileSync(configPath, JSON.stringify({ name: "Test" }, null, 2));
+
+        ensureAgentFeature(tmpDir, "claude");
+
+        const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        expect(config.features["ghcr.io/anthropics/devcontainer-features/claude-code:1.0"]).toBeDefined();
+        expect(config.features["ghcr.io/devcontainers/features/copilot-cli:1"]).toBeUndefined();
+        expect(config.postCreateCommand).toContain("safe.directory");
+
+        fs.rmSync(tmpDir, { recursive: true });
+      });
     });
 
     it("should handle JSONC with comments", () => {
